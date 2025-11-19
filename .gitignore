@@ -1,4 +1,7 @@
 # Python
 .idea/
 __pycache__/
-CPSC2025_Dataset
+CPSC2025_Dataset/
+plots/
+ECG_AF_Net/data/test/testdata.*
+ECG_AF_Net/data/train/traindata.*
