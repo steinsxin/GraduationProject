@@ -244,20 +244,27 @@ class MatDataVisualizer:
 
 
 def main():
-    """主函数示例"""
+    import matplotlib
+    matplotlib.use('Agg')          # 必须在 import pyplot 之前执行
+    import matplotlib.pyplot as plt
+
     mat_file_path = 'CPSC2025_Dataset/CPSC2025_data/train/traindata.mat'
 
     visualizer = MatDataVisualizer(mat_file_path)
     visualizer.load_mat_smart()
     visualizer.print_dataset_info('traindata')
 
-    saved_paths = visualizer.plot_sample(
-        'traindata',
-        [0, 500],
-        save_individual=True,
-        save_combined=True
-    )
-    print("保存的路径:", saved_paths)
+    # 2. 逐张画图、落盘、立即关闭
+    for i in range(1001):
+        visualizer.plot_sample(
+            'traindata',
+            [i],
+            save_individual=True,
+            save_combined=False      # 不要组合图，节省内存与时间
+        )
+        plt.close('all')             # 3. 每轮显式清理 figure 对象
+
+    print('>>> 全部图片已保存至', os.path.abspath(visualizer.save_dir))
 
 if __name__ == '__main__':
     main()
