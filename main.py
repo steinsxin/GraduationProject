@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import scipy.io as sio
 import h5py
@@ -23,10 +24,6 @@ class MatDataVisualizer:
         self.mat_file = mat_file
         self.save_dir = save_dir
         self.data = None
-
-        # Matplotlib 中文显示设置
-        plt.rcParams['font.sans-serif'] = ['SimHei']
-        plt.rcParams['axes.unicode_minus'] = False
 
     def load_mat_smart(self):
         """
@@ -133,8 +130,8 @@ class MatDataVisualizer:
         plt.figure(figsize=figsize)
         plt.plot(sample, linewidth=1)
         plt.title(title, fontsize=14, fontweight='bold')
-        plt.xlabel('特征索引', fontsize=12)
-        plt.ylabel('特征值', fontsize=12)
+        plt.xlabel('Feature Index', fontsize=12)
+        plt.ylabel('Feature Value', fontsize=12) 
         plt.grid(True, linestyle='--', alpha=0.3)
         plt.tight_layout()
         return plt.gcf()
@@ -175,7 +172,7 @@ class MatDataVisualizer:
             individual_paths = []
             for idx in sample_indices:
                 sample = arr[idx]
-                title = (f"{key} 第 {idx} 个样本 - {sample.size} 特征")
+                title = f"{key} Sample {idx}  ({sample.size} features)"
 
                 self._create_sample_plot(sample, title)
                 save_path = self._save_plot(f'{key}_sample_{idx}.png')
@@ -196,29 +193,18 @@ class MatDataVisualizer:
         return saved_paths
 
     def _create_combined_plot(self, arr, key, sample_indices):
-        """
-        创建组合图表
-
-        :param arr: array, 数据数组
-        :param key: str, 数据集名称
-        :param sample_indices: list, 样本索引列表
-        """
         plt.figure(figsize=(20, 6 * len(sample_indices)))
-
         for i, idx in enumerate(sample_indices, 1):
             sample = arr[idx]
             plt.subplot(len(sample_indices), 1, i)
             plt.plot(sample, linewidth=1)
-            plt.title(
-                f"{key} 第 {idx} 个样本 - {sample.size} 特征",
-                fontsize=12,
-                fontweight='bold'
-            )
-            plt.xlabel('特征索引', fontsize=10)
-            plt.ylabel('特征值', fontsize=10)
+            plt.title(f"{key} Sample {idx}  ({sample.size} features)",
+                    fontsize=12, fontweight='bold')
+            plt.xlabel('Feature Index', fontsize=10)
+            plt.ylabel('Feature Value', fontsize=10)
             plt.grid(True, linestyle='--', alpha=0.3)
-
         plt.tight_layout()
+
 
     def plot_first_sample(self, key):
         """
@@ -244,10 +230,6 @@ class MatDataVisualizer:
 
 
 def main():
-    import matplotlib
-    matplotlib.use('Agg')          # 必须在 import pyplot 之前执行
-    import matplotlib.pyplot as plt
-
     mat_file_path = 'CPSC2025_Dataset/CPSC2025_data/train/traindata.mat'
 
     visualizer = MatDataVisualizer(mat_file_path)
@@ -255,12 +237,12 @@ def main():
     visualizer.print_dataset_info('traindata')
 
     # 2. 逐张画图、落盘、立即关闭
-    for i in range(1001):
+    for i in list(range(0, 10)) + list(range(501, 510)):
         visualizer.plot_sample(
             'traindata',
             [i],
             save_individual=True,
-            save_combined=False      # 不要组合图，节省内存与时间
+            save_combined=False   # 不要组合图，节省内存与时间
         )
         plt.close('all')             # 3. 每轮显式清理 figure 对象
 

@@ -42,12 +42,12 @@ def tag_npy_file(npy_path, save_plot=True, max_seg=1000, n_jobs=-1):
     def _worker(idx):
         flag = _single_detect(data[idx])
         label = 'AF' if flag else 'Normal'
-        # if save_plot:
-        #     plt.figure(figsize=(8, 2.5))
-        #     plt.plot(data[idx], lw=0.6)
-        #     plt.title(f'{label} – seg{idx}'); plt.grid(True, ls='--', alpha=0.3)
-        #     plt.savefig(f'af_plots/seg{idx}.png', dpi=120, bbox_inches='tight')
-        #     plt.close()
+        if save_plot:
+            plt.figure(figsize=(8, 2.5))
+            plt.plot(data[idx], lw=0.6)
+            plt.title(f'{label} – seg{idx}'); plt.grid(True, ls='--', alpha=0.3)
+            plt.savefig(f'af_plots/seg{idx}.png', dpi=120, bbox_inches='tight')
+            plt.close()
         return idx, label
 
     results = Parallel(n_jobs=n_jobs, verbose=1)(
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     train_npy = ECG_Datadeal(os.path.join('data', 'train', 'traindata.mat'))
 
     # ① 打标签 + 画图（前 1000）
-    train_results = tag_npy_file(train_npy, save_plot=True, max_seg=1000)
+    train_results = tag_npy_file(train_npy, save_plot=True, max_seg=10)
     np.savetxt('traditional_af_train.csv', train_results,
                fmt='%s', delimiter='\t', header='idx\tlabel', comments='')
     print('>>> 无标签版完成，标签已写入 traditional_af_train.csv')

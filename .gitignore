@@ -2,8 +2,7 @@
 .idea/
 __pycache__/
 CPSC2025_Dataset/
-plots/
 ECG_AF_Net/data/test/testdata.*
 ECG_AF_Net/data/train/traindata.*
 MIT-BIH/data/
-MIT-BIH/af_plots/
+# MIT-BIH/af_plots/
