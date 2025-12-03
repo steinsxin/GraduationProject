@@ -98,4 +98,8 @@ if __name__ == "__main__":
     plt.legend()
 
     plt.tight_layout()
+    # Save the figure
+    plot_save_path = os.path.join("results", "train_old.png")
+    plt.savefig(plot_save_path)
+    print(f"Plots saved to {plot_save_path}")
     plt.show()
