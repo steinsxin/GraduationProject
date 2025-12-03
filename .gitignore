@@ -5,4 +5,4 @@ CPSC2025_Dataset/
 ECG_AF_Net/data/test/testdata.*
 ECG_AF_Net/data/train/traindata.*
 MIT-BIH/data/
-# MIT-BIH/af_plots/
+.~*.wps
