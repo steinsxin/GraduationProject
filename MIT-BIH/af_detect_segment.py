@@ -60,7 +60,7 @@ def find_optimal_thresholds(features, labels):
     best_thresholds = (0, 0)
     
     # 定义阈值搜索范围
-    cv_range = np.arange(0.02, 0.20, 0.01)
+    cv_range = np.arange(0.02, 0.40, 0.01)
     ari_range = np.arange(0.10, 0.40, 0.02)
 
     for cv_th in cv_range:
