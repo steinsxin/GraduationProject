@@ -4,5 +4,5 @@ __pycache__/
 CPSC2025_Dataset/
 ECG_AF_CNN/data/test/testdata.*
 ECG_AF_CNN/data/train/traindata.*
-MIT-BIH/data/
+MIT_BIH/data/
 .~*.wps
