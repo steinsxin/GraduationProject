@@ -5,4 +5,5 @@ CPSC2025_Dataset/
 ECG_AF_CNN/data/test/testdata.*
 ECG_AF_CNN/data/train/traindata.*
 MIT_BIH/data/
+Self-Supervised-Learning/data/
 .~*.wps
