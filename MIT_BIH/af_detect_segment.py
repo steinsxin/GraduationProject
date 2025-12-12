@@ -79,7 +79,7 @@ def find_optimal_thresholds(features, labels):
 if __name__ == '__main__':
     # 1. 数据加载与预处理
     # Use a relative import for robustness within the package
-    from .data_processing.Dealdata import ECG_Datadeal
+    from data_processing.Dealdata import ECG_Datadeal
     print(">>> 步骤1/4: 开始加载和预处理数据...")
     train_npy_path = ECG_Datadeal(os.path.join('data', 'train', 'traindata.mat'))
     all_data = np.load(train_npy_path)
