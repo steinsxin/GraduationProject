@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, SubsetRandomSampler
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 import numpy as np
 import json
 
@@ -52,14 +52,14 @@ if __name__ == "__main__":
     dataset.labels = dataset.labels[permutation]
 
     # 定义K-fold交叉验证
-    kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+    kfold = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=42)
 
     # 存储每次折叠的结果
     results = {}
     all_folds_val_acc = []
 
     # K-fold交叉验证循环
-    for fold, (train_ids, val_ids) in enumerate(kfold.split(dataset)):
+    for fold, (train_ids, val_ids) in enumerate(kfold.split(dataset.data, dataset.labels)):
         print(f'FOLD {fold+1}/{k_folds}')
         print('--------------------------------')
 

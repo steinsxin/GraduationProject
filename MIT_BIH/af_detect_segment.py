@@ -3,7 +3,7 @@ import os
 import numpy as np
 from scipy.signal import filtfilt, butter, find_peaks
 from joblib import Parallel, delayed
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm
 
@@ -104,10 +104,10 @@ if __name__ == '__main__':
 
     # 4. 执行5折交叉验证
     print(">>> 步骤4/4: 开始5折交叉验证...")
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     fold_accuracies = []
 
-    for i, (train_idx, val_idx) in enumerate(kf.split(features)):
+    for i, (train_idx, val_idx) in enumerate(kf.split(features, labels)):
         print(f"\n----- 第 {i+1}/5 折 -----")
         
         # 划分训练集和验证集
