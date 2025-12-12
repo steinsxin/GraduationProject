@@ -1,9 +1,15 @@
 import os
+import sys
+# Add the project root to the Python path to allow for absolute imports
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import scipy.io as sio
 import h5py
+
+from MIT_BIH.data_processing.Dealdata import ECG_Datadeal
 
 
 class MatDataVisualizer:
@@ -14,7 +20,7 @@ class MatDataVisualizer:
     - 绘制指定索引的样本
     """
 
-    def __init__(self, mat_file, save_dir='plots'):
+    def __init__(self, mat_file=None, save_dir='plots'):
         """
         初始化
 
@@ -30,6 +36,8 @@ class MatDataVisualizer:
         智能读取任何版本的 .mat 文件
         支持 v7.2 及更早版本
         """
+        if not self.mat_file:
+            raise ValueError("mat_file path must be provided to load .mat file.")
         try:
             mat_data = sio.loadmat(self.mat_file)
             # 过滤 MATLAB 元数据
@@ -58,7 +66,7 @@ class MatDataVisualizer:
         """
         if self.data is None or key not in self.data:
             raise ValueError(
-                f"数据集 '{key}' 不存在，请先调用 load_mat_smart()"
+                f"数据集 '{key}' 不存在，请先加载数据"
             )
 
         arr = self.data[key]
@@ -131,7 +139,7 @@ class MatDataVisualizer:
         plt.plot(sample, linewidth=1)
         plt.title(title, fontsize=14, fontweight='bold')
         plt.xlabel('Feature Index', fontsize=12)
-        plt.ylabel('Feature Value', fontsize=12) 
+        plt.ylabel('Feature Value', fontsize=12)
         plt.grid(True, linestyle='--', alpha=0.3)
         plt.tight_layout()
         return plt.gcf()
@@ -149,7 +157,7 @@ class MatDataVisualizer:
         """
         if self.data is None or key not in self.data:
             raise ValueError(
-                f"数据集 '{key}' 不存在，请先调用 load_mat_smart()"
+                f"数据集 '{key}' 不存在，请先加载数据"
             )
 
         arr = self.data[key]
@@ -175,7 +183,9 @@ class MatDataVisualizer:
                 title = f"{key} Sample {idx}  ({sample.size} features)"
 
                 self._create_sample_plot(sample, title)
-                save_path = self._save_plot(f'{key}_sample_{idx}.png')
+                # Ensure the filename is different for processed data
+                filename = f'processed_sample_{idx}.png' if 'processed' in key else f'{key}_sample_{idx}.png'
+                save_path = self._save_plot(filename)
                 plt.show()
 
                 individual_paths.append(save_path)
@@ -230,23 +240,50 @@ class MatDataVisualizer:
 
 
 def main():
+    # 1. 定义原始数据路径和样本索引
     mat_file_path = 'CPSC2025_Dataset/CPSC2025_data/train/traindata.mat'
+    sample_indices_to_plot = list(range(0, 10)) + list(range(500, 510))
 
-    visualizer = MatDataVisualizer(mat_file_path)
-    visualizer.load_mat_smart()
-    visualizer.print_dataset_info('traindata')
-
-    # 2. 逐张画图、落盘、立即关闭
-    for i in list(range(0, 10)) + list(range(501, 510)):
-        visualizer.plot_sample(
+    # 2. 可视化并保存原始数据
+    print(">>> (1/2) 开始处理和可视化原始数据...")
+    visualizer_orig = MatDataVisualizer(mat_file_path, save_dir='plots/original_data')
+    original_data = visualizer_orig.load_mat_smart()
+    
+    print(f"\n>>> 正在绘制并保存 {len(sample_indices_to_plot)} 个原始样本...")
+    for i in sample_indices_to_plot:
+        visualizer_orig.plot_sample(
             'traindata',
             [i],
             save_individual=True,
-            save_combined=False   # 不要组合图，节省内存与时间
+            save_combined=False
         )
-        plt.close('all')             # 3. 每轮显式清理 figure 对象
+        plt.close('all') # 清理内存
+    print('>>> 原始样本图片已保存至', os.path.abspath(visualizer_orig.save_dir))
 
-    print('>>> 全部图片已保存至', os.path.abspath(visualizer.save_dir))
+    # 3. 处理数据
+    print("\n>>> (2/2) 开始处理和可视化处理后的数据...")
+    print(">>> 正在使用 ECG_Datadeal 处理数据...")
+    processed_npy_path = ECG_Datadeal(mat_file_path)
+    
+    # 4. 加载并可视化处理后的数据
+    processed_data = np.load(processed_npy_path)
+    visualizer_proc = MatDataVisualizer(save_dir='plots/processed_data')
+    processed_data_key = "processed_traindata"
+    visualizer_proc.data = {processed_data_key: processed_data}
+
+    print(f"\n>>> 正在绘制并保存 {len(sample_indices_to_plot)} 个处理后的样本...")
+    for i in sample_indices_to_plot:
+        visualizer_proc.plot_sample(
+            processed_data_key,
+            [i],
+            save_individual=True,
+            save_combined=False
+        )
+        plt.close('all') # 清理内存
+    print('>>> 处理后的样本图片已保存至', os.path.abspath(visualizer_proc.save_dir))
+
+    print("\n>>> 全部任务完成。")
+
 
 if __name__ == '__main__':
     main()
