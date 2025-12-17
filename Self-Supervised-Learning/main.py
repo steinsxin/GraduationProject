@@ -20,9 +20,9 @@ from model.CNN import CNN
 # 全局参数
 # ============================================================
 FS = 400
-CV_TH = 0.22
+CV_TH = 0.02
 ARI_TH = 0.24
-CONF_THRESHOLD = 60.0
+CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
 NUM_EPOCHS = 40
@@ -172,6 +172,8 @@ if __name__ == "__main__":
     print(f"混合伪标签 ({X_train.shape[0]}) 和真实标签 ({X_labeled.shape[0]}) 数据...")
     X_combined = np.concatenate([X_train, X_labeled])
     y_combined = np.concatenate([y_train, y_labeled])
+    # X_combined = np.concatenate([X_labeled])
+    # y_combined = np.concatenate([y_labeled])
     print(f"总数据: {X_combined.shape}")
 
     # 将混合后的数据划分为训练集和验证集 (4:1)
