@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, SubsetRandomSampler
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedShuffleSplit
 import numpy as np
 import json
 
@@ -41,7 +41,10 @@ if __name__ == "__main__":
     num_epochs = 40
     batch_size = 8
     learning_rate = 0.001
-    k_folds = 5
+    num_splits = 5  # Number of splits for each ratio, similar to k-folds
+
+    # 定义训练比例
+    split_ratios = [(4, 1), (3, 2), (2, 3), (1, 4), (1, 9), (1, 19), (1, 99)]
 
     # 构建数据集
     dataset = ECG_Dataset(trainset_path, mode="train", labeled_only=True)
@@ -51,92 +54,119 @@ if __name__ == "__main__":
     dataset.data = dataset.data[permutation]
     dataset.labels = dataset.labels[permutation]
 
-    # 定义K-fold交叉验证
-    kfold = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=42)
+    # 存储所有比例的最终结果
+    all_ratios_results = {}
 
-    # 存储每次折叠的结果
-    results = {}
-    all_folds_val_acc = []
+    # 外层循环：遍历不同的分割比例
+    for train_ratio, val_ratio in split_ratios:
+        ratio_str = f"{train_ratio}_{val_ratio}"
+        val_size = val_ratio / (train_ratio + val_ratio)
 
-    # K-fold交叉验证循环
-    for fold, (train_ids, val_ids) in enumerate(kfold.split(dataset.data, dataset.labels)):
-        print(f'FOLD {fold+1}/{k_folds}')
-        print('--------------------------------')
+        print(f"--- Starting {num_splits}-split CV for ratio {train_ratio}:{val_ratio} ---")
 
-        # 创建数据采样器和加载器
-        train_subsampler = SubsetRandomSampler(train_ids)
-        val_subsampler = SubsetRandomSampler(val_ids)
+        # 使用StratifiedShuffleSplit进行多次切分
+        sss = StratifiedShuffleSplit(n_splits=num_splits, test_size=val_size, random_state=42)
 
-        train_loader = DataLoader(dataset, batch_size=batch_size, sampler=train_subsampler)
-        test_loader = DataLoader(dataset, batch_size=batch_size, sampler=val_subsampler)
+        # 存储当前比例下每次折叠的结果
+        current_ratio_results = {}
+        all_folds_val_acc = []
 
-        # 初始化模型
-        model = CNN().to(device)
+        # 内层循环：交叉验证
+        for fold, (train_ids, val_ids) in enumerate(sss.split(np.zeros(len(dataset)), dataset.labels)):
+            print(f'  FOLD {fold + 1}/{num_splits}')
+            print('  --------------------------------')
 
-        # 定义损失函数与优化器
-        criterion = nn.BCELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            # 创建数据采样器和加载器
+            train_subsampler = SubsetRandomSampler(train_ids)
+            val_subsampler = SubsetRandomSampler(val_ids)
 
-        # 可选：保存最佳模型
-        save_path = os.path.join("save", f"Bestmodel_CNN_fold_{fold+1}.pth")
+            train_loader = DataLoader(dataset, batch_size=batch_size, sampler=train_subsampler)
+            test_loader = DataLoader(dataset, batch_size=batch_size, sampler=val_subsampler)
 
-        # 训练模型
-        result = my_func.train_model(
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            num_epochs=num_epochs,
-            device=device,
-            save_best=True,
-            save_path=save_path
-        )
+            # 初始化模型
+            model = CNN().to(device)
 
-        # 保存该折叠的结果
-        results[f'fold_{fold+1}'] = {
-            'train_loss': result['train_loss'],
-            'valid_loss': result['valid_loss'],
-            'train_acc': result['train_acc'],
-            'valid_acc': result['valid_acc']
+            # 定义损失函数与优化器
+            criterion = nn.BCELoss()
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+            # 可选：保存最佳模型
+            save_path = os.path.join("save", f"Bestmodel_CNN_ratio_{ratio_str}_fold_{fold+1}.pth")
+            os.makedirs("save", exist_ok=True)
+
+            # 训练模型
+            result = my_func.train_model(
+                model=model,
+                train_loader=train_loader,
+                test_loader=test_loader,
+                criterion=criterion,
+                optimizer=optimizer,
+                num_epochs=num_epochs,
+                device=device,
+                save_best=True,
+                save_path=save_path
+            )
+
+            # 保存该折叠的结果
+            current_ratio_results[f'fold_{fold+1}'] = result
+            all_folds_val_acc.append(max(result['valid_acc']))
+
+        # 保存当前比例的所有折叠结果和平均性能
+        all_ratios_results[f'ratio_{ratio_str}'] = {
+            'details': current_ratio_results,
+            'average_validation_accuracy': np.mean(all_folds_val_acc),
+            'std_dev_validation_accuracy': np.std(all_folds_val_acc)
         }
-        all_folds_val_acc.append(max(result['valid_acc']))
+        print(f"  Average Validation Accuracy for ratio {train_ratio}:{val_ratio}: {np.mean(all_folds_val_acc) * 100:.2f}% (+/- {np.std(all_folds_val_acc) * 100:.2f}%)")
+        print(f"--- Finished CV for ratio {train_ratio}:{val_ratio} ---\n")
 
-    # 保存所有折叠的结果到json文件
-    results_save_path = os.path.join("results", "5_fold_cv_results.json")
+    # 保存所有比例的最终结果到json文件
+    results_save_path = os.path.join("results", "ratio_cv_results.json")
     os.makedirs("results", exist_ok=True)
     with open(results_save_path, 'w') as f:
-        json.dump(results, f, indent=4)
+        json.dump(all_ratios_results, f, indent=4)
 
     print('--------------------------------')
-    print(f'K-fold cross-validation results for {k_folds} folds')
-    print(f'Average Validation Accuracy: {np.mean(all_folds_val_acc) * 100:.2f}% (+/- {np.std(all_folds_val_acc) * 100:.2f}%)')
-    print(f'Results saved to {results_save_path}')
+    print('Overall Results Across All Ratios')
+    for ratio_str, data in all_ratios_results.items():
+        ratio = ratio_str.replace('ratio_', '').replace('_', ':')
+        avg_acc = data['average_validation_accuracy']
+        std_acc = data['std_dev_validation_accuracy']
+        print(f"Ratio {ratio}: Average Validation Accuracy = {avg_acc * 100:.2f}% (+/- {std_acc * 100:.2f}%)")
+    print(f'Overall results saved to {results_save_path}')
 
-    # 可视化训练过程
+    # 可视化每个比例的平均训练过程
     plt.figure(figsize=(12, 5))
-
-    # 绘制每个折叠的验证准确率
-    plt.subplot(1, 2, 1)
-    for fold in results:
-        plt.plot(range(1, num_epochs + 1), results[fold]['valid_acc'], label=f'Val Acc Fold {fold.split("_")[-1]}')
-    plt.title('Validation Accuracy per Fold')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.legend()
     
-    # 绘制每个折叠的验证损失
-    plt.subplot(1, 2, 2)
-    for fold in results:
-        plt.plot(range(1, num_epochs + 1), results[fold]['valid_loss'], label=f'Val Loss Fold {fold.split("_")[-1]}')
-    plt.title('Validation Loss per Fold')
+    # 绘制每个比例的平均验证准确率
+    plt.subplot(1, 2, 1)
+    for ratio_str, data in all_ratios_results.items():
+        ratio = ratio_str.replace('ratio_', '').replace('_', ':')
+        # Calculate average accuracy curve across folds
+        avg_val_acc = np.mean([d['valid_acc'] for d in data['details'].values()], axis=0)
+        plt.plot(range(1, num_epochs + 1), avg_val_acc, label=f'Avg Val Acc Ratio {ratio}')
+    
+    plt.title('Average Validation Accuracy per Ratio')
     plt.xlabel('Epoch')
-    plt.ylabel('Loss')
+    plt.ylabel('Average Accuracy')
+    plt.legend()
+
+    # 绘制每个比例的平均验证损失
+    plt.subplot(1, 2, 2)
+    for ratio_str, data in all_ratios_results.items():
+        ratio = ratio_str.replace('ratio_', '').replace('_', ':')
+        # Calculate average loss curve across folds
+        avg_val_loss = np.mean([d['valid_loss'] for d in data['details'].values()], axis=0)
+        plt.plot(range(1, num_epochs + 1), avg_val_loss, label=f'Avg Val Loss Ratio {ratio}')
+
+    plt.title('Average Validation Loss per Ratio')
+    plt.xlabel('Epoch')
+    plt.ylabel('Average Loss')
     plt.legend()
 
     plt.tight_layout()
-    # Save the figure
-    plot_save_path = os.path.join("results", "5_fold_cv_metrics.png")
+    # 保存图像
+    plot_save_path = os.path.join("results", "ratio_cv_metrics.png")
     plt.savefig(plot_save_path)
     print(f"Plots saved to {plot_save_path}")
     plt.show()

@@ -113,7 +113,6 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, num_epoc
         )
 
     return {
-        'model': model,
         'train_loss': train_epochs_loss,
         'valid_loss': valid_epochs_loss,
         'train_acc': train_epochs_acc,
