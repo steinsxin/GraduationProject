@@ -7,4 +7,5 @@ ECG_AF_CNN/data/train/traindata.*
 ECG_AF_CNN/save/
 MIT_BIH/data/
 Self-Supervised-Learning/data/
+Self-Supervised-Learning/save/
 .~*.wps

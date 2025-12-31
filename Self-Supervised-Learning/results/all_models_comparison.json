@@ -1,0 +1,51 @@
+{
+    "Bestmodel_CNN_ratio_1_99_fold_1": {
+        "accuracy": 0.92125,
+        "f1_score": 0.9223181257706535,
+        "pseudo_afib_count": 331,
+        "pseudo_normal_count": 658,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_1_19_fold_1": {
+        "accuracy": 0.96625,
+        "f1_score": 0.9672727272727273,
+        "pseudo_afib_count": 1322,
+        "pseudo_normal_count": 6061,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_1_9_fold_1": {
+        "accuracy": 0.9575,
+        "f1_score": 0.9591346153846154,
+        "pseudo_afib_count": 3773,
+        "pseudo_normal_count": 11735,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_1_4_fold_1": {
+        "accuracy": 0.975,
+        "f1_score": 0.975609756097561,
+        "pseudo_afib_count": 4164,
+        "pseudo_normal_count": 12128,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_2_3_fold_1": {
+        "accuracy": 0.99,
+        "f1_score": 0.9900744416873449,
+        "pseudo_afib_count": 4372,
+        "pseudo_normal_count": 13367,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_3_2_fold_1": {
+        "accuracy": 0.9925,
+        "f1_score": 0.9925558312655087,
+        "pseudo_afib_count": 4803,
+        "pseudo_normal_count": 13300,
+        "status": "success"
+    },
+    "Bestmodel_CNN_ratio_4_1_fold_1": {
+        "accuracy": 0.9925,
+        "f1_score": 0.9925558312655087,
+        "pseudo_afib_count": 4229,
+        "pseudo_normal_count": 13971,
+        "status": "success"
+    }
+}
