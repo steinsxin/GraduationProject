@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 from data_processing.Dealdata import ECG_Datadeal
 from scipy.signal import filtfilt, butter, find_peaks
@@ -203,29 +204,32 @@ if __name__ == "__main__":
             shuffle=shuffle
         )
 
-    def run_cnn_training(X_train, y_train, model_name="Bestmodel_CNN"):
-        print(f"\n>>> Start Training: {model_name}")
+    def run_cnn_training(X_train, y_train, model_name="Bestmodel_CNN", seed=42):
+        print(f"\n>>> Start Training: {model_name} (Seed: {seed})")
         
         # 将伪标签数据划分为 训练集(80%) 和 验证集(20%)
-        # 用于 Early Stopping，不使用真实标签数据进行验证
         X_tr, X_val, y_tr, y_val = train_test_split(
             X_train, y_train,
             test_size=0.2,
             stratify=y_train,
-            random_state=42
+            random_state=seed
         )
         print(f"   Train: {X_tr.shape}, Val: {X_val.shape}")
 
         train_loader = make_loader(X_tr, y_tr, shuffle=True)
         val_loader = make_loader(X_val, y_val, False)
         
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            
         model = CNN().to(device)
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
         
         save_dir = "save"
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{model_name}.pth")
+        save_path = os.path.join(save_dir, f"{model_name}_seed{seed}.pth")
         
         history = my_func.train_model(
             model=model,
@@ -241,120 +245,156 @@ if __name__ == "__main__":
         return model, save_path, history
 
     # ========================================================
-    # Part 3：Iterative Training (Round 1: Rule-based)
+    # 多次运行的主循环
     # ========================================================
-    print("\n================ Part 3: Iterative Round 1 (Rule-based) =================")
-    
-    model_r1, path_r1, hist_r1 = run_cnn_training(X_train, y_train, "CNN_Step1_RuleBased")
-    
-    # Eval Round 1
-    model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
-    test_loader = make_loader(X_test, y_test, False)
-    
-    preds, gts = [], []
-    with torch.no_grad():
-        for x, y in test_loader:
-            x = x.to(device)
-            out = model_r1(x).squeeze()
-            preds.extend((out > 0.5).int().cpu().numpy())
-            gts.extend(y.numpy())
-            
-    print(f"Round 1 Result (Rule-based) -> Acc: {accuracy_score(gts, preds):.4f}, F1: {f1_score(gts, preds):.4f}")
+    NUM_RUNS = 5
+    all_final_accs = []
+    all_final_f1s = []
+
+    for run_idx in range(NUM_RUNS):
+        current_seed = 42 + run_idx
+        print(f"\n\n{'#'*60}")
+        print(f"### RUN {run_idx + 1}/{NUM_RUNS} (Seed: {current_seed})")
+        print(f"{'#'*60}")
+
+        # ========================================================
+        # Part 3：Iterative Training (Round 1: Rule-based)
+        # ========================================================
+        print("\n--- Iterative Round 1 (Rule-based) ---")
+        
+        model_r1, path_r1, hist_r1 = run_cnn_training(X_train, y_train, "CNN_Step1_RuleBased", seed=current_seed)
+        
+        # ========================================================
+        # Part 4：Iterative Round 2 (Model-based Refinement)
+        # ========================================================
+        print("\n--- Iterative Round 2 (Model Refinement) ---")
+        print("Using Round 1 model to predict on ALL unlabeled data...")
+        
+        # Load best model from Round 1
+        model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
+        model_r1.eval()
+        
+        # 1. 对所有无标签数据进行预测
+        X_all_unlabeled = torch.from_numpy(no_label_data).float().unsqueeze(1)
+        unlabeled_loader = DataLoader(TensorDataset(X_all_unlabeled), batch_size=BATCH_SIZE, shuffle=False)
+        
+        all_probs = []
+        with torch.no_grad():
+            for (x,) in tqdm(unlabeled_loader, desc="Inference", leave=False):
+                x = x.to(device)
+                out = model_r1(x).view(-1)
+                all_probs.extend(out.cpu().numpy())
+                
+        all_probs = np.array(all_probs)
+        
+        # 2. 选取 Model 非常确定的样本 (Confidence > 0.95 or < 0.05)
+        CONF_TH_HIGH = 0.95
+        CONF_TH_LOW = 0.05
+        
+        afib_model_idx = np.where(all_probs > CONF_TH_HIGH)[0]
+        normal_model_idx = np.where(all_probs < CONF_TH_LOW)[0]
+        
+        print(f"   Model High Conf Candidates -> AFib: {len(afib_model_idx)}, Normal: {len(normal_model_idx)}")
+        
+        # 3. 平衡 & Top-K 选取
+        target_count_r2 = min(len(afib_model_idx), len(normal_model_idx), 2500)
+        
+        # AFib (prob -> 1.0)
+        afib_probs_subset = all_probs[afib_model_idx]
+        afib_top_k_indices = np.argsort(afib_probs_subset)[::-1][:target_count_r2] 
+        final_afib_idx_r2 = afib_model_idx[afib_top_k_indices]
+        
+        # Normal (prob -> 0.0)
+        normal_probs_subset = all_probs[normal_model_idx]
+        normal_top_k_indices = np.argsort(normal_probs_subset)[:target_count_r2] 
+        final_normal_idx_r2 = normal_model_idx[normal_top_k_indices]
+        
+        X_afib_r2 = no_label_data[final_afib_idx_r2]
+        X_normal_r2 = no_label_data[final_normal_idx_r2]
+        
+        X_train_r2 = np.concatenate([X_afib_r2, X_normal_r2])
+        y_train_r2 = np.concatenate([np.ones(len(X_afib_r2)), np.zeros(len(X_normal_r2))])
+        
+        perm = np.random.permutation(len(X_train_r2))
+        X_train_r2, y_train_r2 = X_train_r2[perm], y_train_r2[perm]
+        
+        print(f"   Final Training Set for Round 2: {X_train_r2.shape}")
+
+        # 4. Train Final Model
+        model_final, path_final, hist_final = run_cnn_training(X_train_r2, y_train_r2, "CNN_Final_iter2", seed=current_seed)
+
+        # ========================================================
+        # Part 5：最终测试
+        # ========================================================
+        print(f"\n--- Final Test (Run {run_idx+1}) ---")
+
+        model_final.load_state_dict(torch.load(path_final, map_location=device, weights_only=True))
+        
+        test_loader = make_loader(X_test, y_test, False)
+
+        preds, gts = [], []
+        with torch.no_grad():
+            for x, y in test_loader:
+                x = x.to(device)
+                out = model_final(x).squeeze()
+                pred = (out > 0.5).int().cpu().numpy()
+                preds.extend(pred)
+                gts.extend(y.numpy())
+
+        acc = accuracy_score(gts, preds)
+        f1 = f1_score(gts, preds)
+
+        print(f"   [Run {run_idx+1}] Result -> Accuracy: {acc:.4f}, F1: {f1:.4f}")
+        
+        all_final_accs.append(acc)
+        all_final_f1s.append(f1)
+        
+        # Save Plot for last run only (to avoid clutter) or separate files
+        if run_idx == 0:
+            plt.figure(figsize=(12, 5))
+            plt.subplot(1, 2, 1)
+            plt.plot(hist_final['train_loss'], label='Train Loss')
+            plt.plot(hist_final['valid_loss'], label='Validation Loss')
+            plt.title(f'Loss Curve (Run {run_idx+1})')
+            plt.legend()
+            plt.subplot(1, 2, 2)
+            plt.plot(hist_final['train_acc'], label='Train Accuracy')
+            plt.plot(hist_final['valid_acc'], label='Validation Accuracy')
+            plt.title(f'Accuracy Curve (Run {run_idx+1})')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join("results", f"training_process_run{run_idx+1}.png"))
+            plt.close()
 
     # ========================================================
-    # Part 4：Iterative Round 2 (Model-based Refinement)
+    # Summary
     # ========================================================
-    print("\n================ Part 4: Iterative Round 2 (Model Refinement) =================")
-    print("Using Round 1 model to predict on ALL unlabeled data...")
+    print("\n\n========================================================")
+    print(f"Final Summary Over {NUM_RUNS} Runs")
+    print("========================================================")
     
-    # 1. 对所有无标签数据进行预测
-    X_all_unlabeled = torch.from_numpy(no_label_data).float().unsqueeze(1)
-    unlabeled_loader = DataLoader(TensorDataset(X_all_unlabeled), batch_size=BATCH_SIZE, shuffle=False)
-    
-    all_probs = []
-    with torch.no_grad():
-        for (x,) in tqdm(unlabeled_loader, desc="Inference"):
-            x = x.to(device)
-            out = model_r1(x).view(-1)
-            all_probs.extend(out.cpu().numpy())
-            
-    all_probs = np.array(all_probs)
-    
-    # 2. 选取 Model 非常确定的样本 (Confidence > 0.95 or < 0.05)
-    # 这能过滤掉 Rule 认为是对的但 Model 觉得长得像噪声的样本
-    CONF_TH_HIGH = 0.95
-    CONF_TH_LOW = 0.05
-    
-    afib_model_idx = np.where(all_probs > CONF_TH_HIGH)[0]
-    normal_model_idx = np.where(all_probs < CONF_TH_LOW)[0]
-    
-    print(f"Model High Conf Candidates -> AFib: {len(afib_model_idx)}, Normal: {len(normal_model_idx)}")
-    
-    # 3. 平衡 & Top-K 选取
-    target_count_r2 = min(len(afib_model_idx), len(normal_model_idx), 2500) # 稍微放宽一点上限
-    print(f"Target count per class (Round 2): {target_count_r2}")
-    
-    # 对 AFib (prob 接近 1.0)
-    afib_probs_subset = all_probs[afib_model_idx]
-    # 降序取前K
-    afib_top_k_indices = np.argsort(afib_probs_subset)[::-1][:target_count_r2] 
-    final_afib_idx_r2 = afib_model_idx[afib_top_k_indices]
-    
-    # 对 Normal (prob 接近 0.0)
-    normal_probs_subset = all_probs[normal_model_idx]
-    # 升序取前K (越小越好)
-    normal_top_k_indices = np.argsort(normal_probs_subset)[:target_count_r2] 
-    final_normal_idx_r2 = normal_model_idx[normal_top_k_indices]
-    
-    X_afib_r2 = no_label_data[final_afib_idx_r2]
-    X_normal_r2 = no_label_data[final_normal_idx_r2]
-    
-    X_train_r2 = np.concatenate([X_afib_r2, X_normal_r2])
-    y_train_r2 = np.concatenate([np.ones(len(X_afib_r2)), np.zeros(len(X_normal_r2))])
-    
-    perm = np.random.permutation(len(X_train_r2))
-    X_train_r2, y_train_r2 = X_train_r2[perm], y_train_r2[perm]
-    
-    print(f"Final Training Set for Round 2: {X_train_r2.shape}")
+    mean_acc = np.mean(all_final_accs)
+    std_acc = np.std(all_final_accs)
+    mean_f1 = np.mean(all_final_f1s)
+    std_f1 = np.std(all_final_f1s)
 
-    # 4. Train Final Model
-    model_final, path_final, hist_final = run_cnn_training(X_train_r2, y_train_r2, "CNN_Final_iter2")
-
-    # ========================================================
-    # Part 5：最终测试
-    # ========================================================
-    print("\n================ Part 5: Final Test (Round 2 Model) =================")
-
-    model_final.load_state_dict(torch.load(path_final, map_location=device, weights_only=True))
-
-    preds, gts = [], []
-    with torch.no_grad():
-        for x, y in test_loader:
-            x = x.to(device)
-            out = model_final(x).squeeze()
-            pred = (out > 0.5).int().cpu().numpy()
-            preds.extend(pred)
-            gts.extend(y.numpy())
-
-    acc = accuracy_score(gts, preds)
-    f1 = f1_score(gts, preds)
-
-    print("\n====== Final Result (Refined) ======")
-    print(f"Accuracy : {acc:.4f}")
-    print(f"F1-score : {f1:.4f}")
+    print(f"Accuracy: {mean_acc:.4f} (+/- {std_acc:.4f})")
+    print(f"F1-Score: {mean_f1:.4f} (+/- {std_f1:.4f})")
+    print(f"Raw Accs: {all_final_accs}")
     
-    # Save Plot
-    plt.figure(figsize=(12, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(hist_final['train_loss'], label='Train Loss')
-    plt.plot(hist_final['valid_loss'], label='Validation Loss')
-    plt.title('Loss Curve (Final)')
-    plt.legend()
-    plt.subplot(1, 2, 2)
-    plt.plot(hist_final['train_acc'], label='Train Accuracy')
-    plt.plot(hist_final['valid_acc'], label='Validation Accuracy')
-    plt.title('Accuracy Curve (Final)')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join("results", "training_process_final.png"))
-    print("Plot saved.")
+    # Save results to JSON file
+    results_data = {
+        "mean_accuracy": float(mean_acc),
+        "std_accuracy": float(std_acc),
+        "mean_f1_score": float(mean_f1),
+        "std_f1_score": float(std_f1),
+        "raw_accuracies": [float(x) for x in all_final_accs],
+        "raw_f1_scores": [float(x) for x in all_final_f1s]
+    }
+    
+    json_path = os.path.join("results", "final_stats.json")
+    with open(json_path, "w") as f:
+        json.dump(results_data, f, indent=4)
+        
+    print(f"Results saved to {json_path}")
+
