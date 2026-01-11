@@ -52,14 +52,10 @@ if __name__ == "__main__":
     print(f"有标签数据: {label_data.shape}")
     print(f"无标签数据: {no_label_data.shape}")
 
-    # 固定测试集和有标签种子集
-    X_labeled, X_test, y_labeled, y_test = train_test_split(
-        label_data, labels,
-        test_size=0.8,
-        stratify=labels,
-        random_state=42
-    )
-    print(f"Labeled (for training): {X_labeled.shape}, Test: {X_test.shape}")
+    # 所有有标签数据作为最终测试集
+    X_test = label_data
+    y_test = labels
+    print(f"Test Set (All Labeled Data): {X_test.shape}")
 
     # 获取所有权重文件
     weight_files = glob.glob(os.path.join("weights", "*.pth"))
@@ -148,18 +144,19 @@ if __name__ == "__main__":
         # ========================================================
         # Part 3：PyTorch 训练 (Semi-Supervised)
         # ========================================================
-        print(f"混合伪标签 ({X_train.shape[0]}) 和真实标签 ({X_labeled.shape[0]}) 数据...")
-        X_combined = np.concatenate([X_train, X_labeled])
-        y_combined = np.concatenate([y_train, y_labeled])
+        print(f"仅使用伪标签数据进行训练和验证划分 ({X_train.shape[0]})...")
         
-        # 将混合后的数据划分为训练集和验证集 (4:1)
+        # 将伪标签数据划分为 训练集(80%) 和 验证集(20%)
         X_train_final, X_val, y_train_final, y_val = train_test_split(
-            X_combined, y_combined,
+            X_train, y_train,
             test_size=0.2,
-            stratify=y_combined,
+            stratify=y_train,
             random_state=42
         )
         
+        print(f"Training Set (Pseudo): {X_train_final.shape}")
+        print(f"Validation Set (Pseudo): {X_val.shape}")
+
         train_loader = make_loader(X_train_final, y_train_final, shuffle=True)
         val_loader = make_loader(X_val, y_val, False)
 

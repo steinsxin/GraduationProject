@@ -106,28 +106,69 @@ if __name__ == "__main__":
     print(f"无标签数据: {no_label_data.shape}")
 
     # ========================================================
-    # Part 1：无标签数据 → 伪标签
+    # Part 1：无标签数据 → 伪标签 (Rule-based High Quality Selection)
     # ========================================================
-    print("\n================ Part 1: 伪标签生成 =================")
-
-    features = np.array(Parallel(n_jobs=-1)(
+    print("\n================ Part 1: 伪标签生成 (Unsupervised Rule-based) =================")
+    
+    # 提取无标签数据特征
+    print("Step 1: 提取无标签数据特征...")
+    unlabeled_features = np.array(Parallel(n_jobs=-1)(
         delayed(_calculate_features)(no_label_data[i])
-        for i in tqdm(range(len(no_label_data)), desc="特征提取")
+        for i in tqdm(range(len(no_label_data)), desc="Unlabeled Feat")
     ))
 
-    results = [calculate_confidence(f[0], f[1], CV_TH, ARI_TH) for f in features]
+    # 基于专家规则 (CV, ARI) 计算置信度
+    # calculated_confidence 返回: (预测类别 0/1, 置信度 50-100)
+    print("Step 2: 计算专家规则置信度 (CV & ARI)...")
+    rule_results = np.array([calculate_confidence(f[0], f[1], CV_TH, ARI_TH) for f in unlabeled_features])
+    
+    pred_labels = rule_results[:, 0]
+    confidences = rule_results[:, 1]
+    
+    # 筛选潜在样本
+    # 提高基础阈值，例如要求置信度 > 80 (原代码是 50)
+    # AFib 样本：类别 1，置信度高
+    # Normal 样本：类别 0，置信度高
+    
+    afib_candidates = np.where(pred_labels == 1)[0]
+    normal_candidates = np.where(pred_labels == 0)[0]
+    
+    print(f"Candidates (Pre-filter) -> AFib: {len(afib_candidates)}, Normal: {len(normal_candidates)}")
+    
+    # Step 3: Top-K 高质量筛选与平衡 (Quality Control)
+    # 策略：取两类中数量较少者的 Top N，或者设定固定上限，取置信度最高的样本
+    
+    # 设定一个严格的“入围”门槛，比如 85 分以上
+    STRICT_TH = 85.0
+    afib_qualified = afib_candidates[confidences[afib_candidates] >= STRICT_TH]
+    normal_qualified = normal_candidates[confidences[normal_candidates] >= STRICT_TH]
+    
+    print(f"Qualified (> {STRICT_TH} conf) -> AFib: {len(afib_qualified)}, Normal: {len(normal_qualified)}")
+    
+    # 确定最终数量：取两者最小值，进行严格平衡
+    final_count = min(len(afib_qualified), len(normal_qualified))
+    # 可选：再加一个上限，防止伪标签太多
+    MAX_COUNT = 2000
+    final_count = min(final_count, MAX_COUNT)
+    
+    print(f"Target count per class: {final_count}")
+    
+    if final_count == 0:
+         raise RuntimeError("⚠️ 没有足够的高置信度样本，请检查数据或降低 STRICT_TH。")
 
-    afib_idx = [i for i, (p, c) in enumerate(results) if p == 1 and c >= CONF_THRESHOLD]
-    normal_idx = [i for i, (p, c) in enumerate(results) if p == 0 and c >= CONF_THRESHOLD]
+    # 对 AFib 样本按置信度从高到低排序，取前 final_count 个
+    afib_sorted_idx = np.argsort(confidences[afib_qualified])[::-1] # 降序
+    final_afib_idx = afib_qualified[afib_sorted_idx[:final_count]]
+    
+    # 对 Normal 样本同理
+    normal_sorted_idx = np.argsort(confidences[normal_qualified])[::-1]
+    final_normal_idx = normal_qualified[normal_sorted_idx[:final_count]]
+    
+    X_afib = no_label_data[final_afib_idx]
+    X_normal = no_label_data[final_normal_idx]
 
-    X_afib = no_label_data[afib_idx]
-    X_normal = no_label_data[normal_idx]
-
-    print(f"伪 AFib: {len(X_afib)}")
-    print(f"伪 Normal: {len(X_normal)}")
-
-    if len(X_afib) == 0 or len(X_normal) == 0:
-        raise RuntimeError("⚠️ 伪标签严重失衡，请降低 CONF_THRESHOLD")
+    print(f"最终选定高质量伪标签: AFib: {len(X_afib)} (Min Conf: {confidences[final_afib_idx[-1]]:.2f}), "
+          f"Normal: {len(X_normal)} (Min Conf: {confidences[final_normal_idx[-1]]:.2f})")
 
     X_train = np.concatenate([X_afib, X_normal])
     y_train = np.concatenate([
@@ -139,18 +180,14 @@ if __name__ == "__main__":
     X_train, y_train = X_train[perm], y_train[perm]
 
     # ========================================================
-    # Part 2：Labeled Seed / Test（真实标签）
+    # Part 2：Test Set Definition
     # ========================================================
-    print("\n================ Part 2: Labeled Seed / Test =================")
-
-    X_labeled, X_test, y_labeled, y_test = train_test_split(
-        label_data, labels,
-        test_size=0.8,
-        stratify=labels,
-        random_state=42
-    )
-
-    print(f"Labeled (for training): {X_labeled.shape}, Test: {X_test.shape}")
+    print("\n================ Part 2: Defining Test Set =================")
+    
+    # 所有有标签数据作为最终测试集
+    X_test = label_data
+    y_test = labels
+    print(f"Test Set (All Labeled Data): {X_test.shape}")
 
     # ========================================================
     # Part 3：PyTorch 训练
@@ -168,22 +205,18 @@ if __name__ == "__main__":
             shuffle=shuffle
         )
 
-    # 混合伪标签数据和有标签的种子数据
-    print(f"混合伪标签 ({X_train.shape[0]}) 和真实标签 ({X_labeled.shape[0]}) 数据...")
-    X_combined = np.concatenate([X_train, X_labeled])
-    y_combined = np.concatenate([y_train, y_labeled])
-    # X_combined = np.concatenate([X_labeled])
-    # y_combined = np.concatenate([y_labeled])
-    print(f"总数据: {X_combined.shape}")
-
-    # 将混合后的数据划分为训练集和验证集 (4:1)
+    print(f"仅使用伪标签数据进行训练和验证划分...")
+    
+    # 将伪标签数据划分为 训练集(80%) 和 验证集(20%)
     X_train_final, X_val, y_train_final, y_val = train_test_split(
-        X_combined, y_combined,
-        test_size=0.2,  # 20% for validation (4:1 split)
-        stratify=y_combined,
+        X_train, y_train,
+        test_size=0.2,
+        stratify=y_train,
         random_state=42
     )
-    print(f"最终训练集: {X_train_final.shape}, 验证集: {X_val.shape}")
+
+    print(f"训练集 (Pseudo Train): {X_train_final.shape}")
+    print(f"验证集 (Pseudo Val):   {X_val.shape}")
 
     train_loader = make_loader(X_train_final, y_train_final, shuffle=True)
     val_loader = make_loader(X_val, y_val, False)

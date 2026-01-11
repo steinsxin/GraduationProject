@@ -49,11 +49,9 @@ if __name__ == "__main__":
     # 构建数据集
     dataset = ECG_Dataset(trainset_path, mode="train", labeled_only=True)
 
-    # 进一步打乱数据和标签，确保AF和非AF样本充分混合
-    permutation = np.random.permutation(len(dataset))
-    dataset.data = dataset.data[permutation]
-    dataset.labels = dataset.labels[permutation]
-
+    # 不在全局进行随机打乱，而是依赖 StratifiedShuffleSplit 来保证划分的平衡性
+    # 原始数据前500是房颤，后500是正常，StratifiedShuffleSplit 会根据标签自动分层采样
+    
     # 存储所有比例的最终结果
     all_ratios_results = {}
 
@@ -70,10 +68,18 @@ if __name__ == "__main__":
         # 存储当前比例下每次折叠的结果
         current_ratio_results = {}
         all_folds_val_acc = []
+        fold_model_paths = [] # Store (accuracy, path) for cleanup
 
         # 内层循环：交叉验证
         for fold, (train_ids, val_ids) in enumerate(sss.split(np.zeros(len(dataset)), dataset.labels)):
             print(f'  FOLD {fold + 1}/{num_splits}')
+            
+            # Check label distribution
+            train_labels = dataset.labels[train_ids]
+            num_af = np.sum(train_labels == 1)
+            num_normal = np.sum(train_labels == 0)
+            print(f"  Training Set Distribution -> AFib: {num_af}, Normal: {num_normal} (Total: {len(train_ids)})")
+
             print('  --------------------------------')
 
             # 创建数据采样器和加载器
