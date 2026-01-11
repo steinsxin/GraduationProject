@@ -248,14 +248,40 @@ if __name__ == "__main__":
     # 多次运行的主循环
     # ========================================================
     NUM_RUNS = 5
-    all_final_accs = []
+    
+    # Metrics Storage
+    all_rule_accs = []      # Pure Rule-based (CV/ARI) Accuracy on Test Set
+    all_r1_accs = []        # Round 1 Model Accuracy
+    all_final_accs = []     # Round 2 (Final) Model Accuracy
+    
+    all_r1_f1s = []
     all_final_f1s = []
+
+    # Pre-calculate Rule-based Performance on Test Set (One-time)
+    print("\n--- Evaluating Pure Rule-based Performance on Test Set ---")
+    
+    # 提取测试集特征（如果有标签数据量大，这里可能会花点时间）
+    test_features = np.array(Parallel(n_jobs=-1)(
+        delayed(_calculate_features)(X_test[i])
+        for i in tqdm(range(len(X_test)), desc="Test Feat Extraction")
+    ))
+    
+    # 应用规则
+    rule_test_results = np.array([calculate_confidence(f[0], f[1], CV_TH, ARI_TH) for f in test_features])
+    rule_preds = rule_test_results[:, 0] # 0 or 1
+    
+    rule_acc = accuracy_score(y_test, rule_preds)
+    rule_f1 = f1_score(y_test, rule_preds)
+    print(f"Pure Rule-based Result -> Acc: {rule_acc:.4f}, F1: {rule_f1:.4f}")
 
     for run_idx in range(NUM_RUNS):
         current_seed = 42 + run_idx
         print(f"\n\n{'#'*60}")
         print(f"### RUN {run_idx + 1}/{NUM_RUNS} (Seed: {current_seed})")
         print(f"{'#'*60}")
+        
+        # Store Rule Acc (Repeated for consistency across runs structure)
+        all_rule_accs.append(rule_acc)
 
         # ========================================================
         # Part 3：Iterative Training (Round 1: Rule-based)
@@ -263,6 +289,25 @@ if __name__ == "__main__":
         print("\n--- Iterative Round 1 (Rule-based) ---")
         
         model_r1, path_r1, hist_r1 = run_cnn_training(X_train, y_train, "CNN_Step1_RuleBased", seed=current_seed)
+        
+        # Eval Round 1 Model on Test Set
+        model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
+        test_loader = make_loader(X_test, y_test, False)
+        
+        preds_r1, gts_r1 = [], []
+        with torch.no_grad():
+            for x, y in test_loader:
+                x = x.to(device)
+                out = model_r1(x).squeeze()
+                preds_r1.extend((out > 0.5).int().cpu().numpy())
+                gts_r1.extend(y.numpy())
+        
+        acc_r1 = accuracy_score(gts_r1, preds_r1)
+        f1_r1 = f1_score(gts_r1, preds_r1)
+        print(f"Round 1 Model Result -> Acc: {acc_r1:.4f}, F1: {f1_r1:.4f}")
+        
+        all_r1_accs.append(acc_r1)
+        all_r1_f1s.append(f1_r1)
         
         # ========================================================
         # Part 4：Iterative Round 2 (Model-based Refinement)
@@ -373,28 +418,44 @@ if __name__ == "__main__":
     print(f"Final Summary Over {NUM_RUNS} Runs")
     print("========================================================")
     
-    mean_acc = np.mean(all_final_accs)
-    std_acc = np.std(all_final_accs)
-    mean_f1 = np.mean(all_final_f1s)
-    std_f1 = np.std(all_final_f1s)
-
-    print(f"Accuracy: {mean_acc:.4f} (+/- {std_acc:.4f})")
-    print(f"F1-Score: {mean_f1:.4f} (+/- {std_f1:.4f})")
-    print(f"Raw Accs: {all_final_accs}")
+    # Calculate Means & Stds
+    mean_rule_acc, std_rule_acc = np.mean(all_rule_accs), np.std(all_rule_accs)
+    mean_r1_acc, std_r1_acc = np.mean(all_r1_accs), np.std(all_r1_accs)
+    mean_final_acc, std_final_acc = np.mean(all_final_accs), np.std(all_final_accs)
     
+    mean_r1_f1, std_r1_f1 = np.mean(all_r1_f1s), np.std(all_r1_f1s)
+    mean_final_f1, std_final_f1 = np.mean(all_final_f1s), np.std(all_final_f1s)
+
+    print(f"1. Pure Rule-based Acc: {mean_rule_acc:.4f} (fixed)")
+    print(f"2. Round 1 Model Acc:   {mean_r1_acc:.4f} (+/- {std_r1_acc:.4f})")
+    print(f"3. Final Model Acc:     {mean_final_acc:.4f} (+/- {std_final_acc:.4f})")
+
     # Save results to JSON file
     results_data = {
-        "mean_accuracy": float(mean_acc),
-        "std_accuracy": float(std_acc),
-        "mean_f1_score": float(mean_f1),
-        "std_f1_score": float(std_f1),
-        "raw_accuracies": [float(x) for x in all_final_accs],
-        "raw_f1_scores": [float(x) for x in all_final_f1s]
+        "rule_based": {
+            "mean_accuracy": float(mean_rule_acc),
+            "mean_f1_score": float(rule_f1) # rule based is deterministic
+        },
+        "round_1_model": {
+            "mean_accuracy": float(mean_r1_acc),
+            "std_accuracy": float(std_r1_acc),
+            "mean_f1_score": float(mean_r1_f1),
+            "std_f1_score": float(std_r1_f1),
+            "raw_accuracies": [float(x) for x in all_r1_accs]
+        },
+        "final_model": {
+            "mean_accuracy": float(mean_final_acc),
+            "std_accuracy": float(std_final_acc),
+            "mean_f1_score": float(mean_final_f1),
+            "std_f1_score": float(std_final_f1),
+            "raw_accuracies": [float(x) for x in all_final_accs],
+            "raw_f1_scores": [float(x) for x in all_final_f1s]
+        }
     }
     
     json_path = os.path.join("results", "final_stats.json")
     with open(json_path, "w") as f:
         json.dump(results_data, f, indent=4)
         
-    print(f"Results saved to {json_path}")
+    print(f"Detailed results saved to {json_path}")
 
