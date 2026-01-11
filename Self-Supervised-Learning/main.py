@@ -248,7 +248,7 @@ if __name__ == "__main__":
     model_r1, path_r1, hist_r1 = run_cnn_training(X_train, y_train, "CNN_Step1_RuleBased")
     
     # Eval Round 1
-    model_r1.load_state_dict(torch.load(path_r1, map_location=device))
+    model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
     test_loader = make_loader(X_test, y_test, False)
     
     preds, gts = [], []
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     # ========================================================
     print("\n================ Part 5: Final Test (Round 2 Model) =================")
 
-    model_final.load_state_dict(torch.load(path_final, map_location=device))
+    model_final.load_state_dict(torch.load(path_final, map_location=device, weights_only=True))
 
     preds, gts = [], []
     with torch.no_grad():
