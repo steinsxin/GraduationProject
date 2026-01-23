@@ -1,0 +1,8 @@
+{
+    "accuracy": 0.9525,
+    "f1_score": 0.9536585365853658,
+    "pseudo_afib_count": 331,
+    "pseudo_normal_count": 658,
+    "afib_threshold": 0.55,
+    "normal_threshold": 0.2
+}
