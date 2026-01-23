@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 import matplotlib.pyplot as plt
 
 import my_func
@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 40
+NUM_EPOCHS = 60
 LR = 1e-3
 
 
@@ -86,6 +86,53 @@ def calculate_confidence(cv, ari, cv_th, ari_th):
 
     conf = np.clip(conf, 50, 100)
     return label, conf
+
+
+# ============================================================
+# 数据增强 Dataset
+# ============================================================
+class AugmentedDataset(Dataset):
+    def __init__(self, X, y, augment=False):
+        self.X = X
+        self.y = y
+        self.augment = augment
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        # 复制数据防止修改原数组
+        sig = self.X[idx].copy()
+        target = self.y[idx]
+
+        if self.augment:
+            # 1. 随机幅度缩放 (Scaling)
+            # 模拟信号强度的变化
+            if np.random.rand() < 0.5:
+                scale = np.random.uniform(0.8, 1.2)
+                sig = sig * scale
+            
+            # 2. 随机高斯噪声 (Jittering)
+            # 模拟传感器噪声
+            if np.random.rand() < 0.5:
+                # 假设数据已经过标准化 (mean=0, std=1)，添加 0.05 std 的噪声
+                noise = np.random.normal(0, 0.05, sig.shape)
+                sig = sig + noise
+
+            # 3. 随机平移 (Time Shift/Roll)
+            # 模拟截取窗口的偏移
+            if np.random.rand() < 0.5:
+                # 最大移动 ±100 个采样点 (FS=400, 0.25s)
+                shift = np.random.randint(-100, 100)
+                sig = np.roll(sig, shift)
+                # 注意：np.roll 是循环的，但对于心电这种周期或者长信号通常影响不大
+                # 如果是边界敏感的，可以使用 pad + crop 方式，简单起见这里用 roll
+
+        # 转为 Tensor: (1, Length)
+        sig_tensor = torch.from_numpy(sig).float().unsqueeze(0)
+        target_tensor = torch.tensor(target).float()
+        
+        return sig_tensor, target_tensor
 
 
 # ============================================================
@@ -170,7 +217,6 @@ if __name__ == "__main__":
 
     print(f"最终选定高质量伪标签: AFib: {len(X_afib)} (Min Conf: {confidences[final_afib_idx[-1]]:.2f}), "
           f"Normal: {len(X_normal)} (Min Conf: {confidences[final_normal_idx[-1]]:.2f})")
-
     X_train = np.concatenate([X_afib, X_normal])
     y_train = np.concatenate([
         np.ones(len(X_afib)),
@@ -195,11 +241,10 @@ if __name__ == "__main__":
     # ========================================================
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def make_loader(X, y, shuffle):
-        X = torch.from_numpy(X).float().unsqueeze(1)
-        y = torch.from_numpy(y).float()
+    def make_loader(X, y, shuffle, augment=False):
+        dataset = AugmentedDataset(X, y, augment=augment)
         return DataLoader(
-            TensorDataset(X, y),
+            dataset,
             batch_size=BATCH_SIZE,
             shuffle=shuffle
         )
@@ -216,8 +261,8 @@ if __name__ == "__main__":
         )
         print(f"   Train: {X_tr.shape}, Val: {X_val.shape}")
 
-        train_loader = make_loader(X_tr, y_tr, shuffle=True)
-        val_loader = make_loader(X_val, y_val, False)
+        train_loader = make_loader(X_tr, y_tr, shuffle=True, augment=True)
+        val_loader = make_loader(X_val, y_val, False, augment=False)
         
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -247,7 +292,7 @@ if __name__ == "__main__":
     # ========================================================
     # 多次运行的主循环
     # ========================================================
-    NUM_RUNS = 5
+    NUM_RUNS = 1
     
     # Metrics Storage
     all_rule_accs = []      # Pure Rule-based (CV/ARI) Accuracy on Test Set
@@ -375,7 +420,7 @@ if __name__ == "__main__":
 
         model_final.load_state_dict(torch.load(path_final, map_location=device, weights_only=True))
         
-        test_loader = make_loader(X_test, y_test, False)
+        test_loader = make_loader(X_test, y_test, False, augment=False)
 
         preds, gts = [], []
         with torch.no_grad():
