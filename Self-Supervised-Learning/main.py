@@ -128,6 +128,13 @@ class AugmentedDataset(Dataset):
                 # 注意：np.roll 是循环的，但对于心电这种周期或者长信号通常影响不大
                 # 如果是边界敏感的，可以使用 pad + crop 方式，简单起见这里用 roll
 
+            # 4. Random Masking (Cutout)
+            # 随机遮挡 0.5s 的信号 (200采样点)
+            if np.random.rand() < 0.3:
+                mask_len = 200
+                start_p = np.random.randint(0, len(sig) - mask_len)
+                sig[start_p:start_p+mask_len] = 0.0
+
         # 转为 Tensor: (1, Length)
         sig_tensor = torch.from_numpy(sig).float().unsqueeze(0)
         target_tensor = torch.tensor(target).float()
@@ -329,128 +336,152 @@ if __name__ == "__main__":
         all_rule_accs.append(rule_acc)
 
         # ========================================================
-        # Part 3：Iterative Training (Round 1: Rule-based)
+        # Part 3：Iterative Self-Training (15 Rounds)
         # ========================================================
-        print("\n--- Iterative Round 1 (Rule-based) ---")
+        # 定义总共的轮次
+        TOTAL_ROUNDS = 15
         
-        model_r1, path_r1, hist_r1 = run_cnn_training(X_train, y_train, "CNN_Step1_RuleBased", seed=current_seed)
+        # 变量初始化
+        current_model = None
+        current_model_path = ""
+        last_hist = None
         
-        # Eval Round 1 Model on Test Set
-        model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
-        test_loader = make_loader(X_test, y_test, False)
+        # 为了记录过程，我们存一下每一轮的 ACC
+        run_iter_accs = []
+        run_iter_f1s = []
         
-        preds_r1, gts_r1 = [], []
-        with torch.no_grad():
-            for x, y in test_loader:
-                x = x.to(device)
-                out = model_r1(x).squeeze()
-                preds_r1.extend((out > 0.5).int().cpu().numpy())
-                gts_r1.extend(y.numpy())
-        
-        acc_r1 = accuracy_score(gts_r1, preds_r1)
-        f1_r1 = f1_score(gts_r1, preds_r1)
-        print(f"Round 1 Model Result -> Acc: {acc_r1:.4f}, F1: {f1_r1:.4f}")
-        
-        all_r1_accs.append(acc_r1)
-        all_r1_f1s.append(f1_r1)
-        
-        # ========================================================
-        # Part 4：Iterative Round 2 (Model-based Refinement)
-        # ========================================================
-        print("\n--- Iterative Round 2 (Model Refinement) ---")
-        print("Using Round 1 model to predict on ALL unlabeled data...")
-        
-        # Load best model from Round 1
-        model_r1.load_state_dict(torch.load(path_r1, map_location=device, weights_only=True))
-        model_r1.eval()
-        
-        # 1. 对所有无标签数据进行预测
-        X_all_unlabeled = torch.from_numpy(no_label_data).float().unsqueeze(1)
-        unlabeled_loader = DataLoader(TensorDataset(X_all_unlabeled), batch_size=BATCH_SIZE, shuffle=False)
-        
-        all_probs = []
-        with torch.no_grad():
-            for (x,) in tqdm(unlabeled_loader, desc="Inference", leave=False):
-                x = x.to(device)
-                out = model_r1(x).view(-1)
-                all_probs.extend(out.cpu().numpy())
+        for r_idx in range(1, TOTAL_ROUNDS + 1):
+            print(f"\n--- Iterative Round {r_idx} / {TOTAL_ROUNDS} ---")
+            
+            # --- 数据准备 ---
+            if r_idx == 1:
+                # Round 1: 使用 Rule-based 生成的伪标签 (Part 1 结果)
+                curr_X_train = X_train
+                curr_y_train = y_train
+                model_suffix = "Iter1_RuleBased"
                 
-        all_probs = np.array(all_probs)
-        
-        # 2. 选取 Model 非常确定的样本 (Confidence > 0.95 or < 0.05)
-        CONF_TH_HIGH = 0.95
-        CONF_TH_LOW = 0.05
-        
-        afib_model_idx = np.where(all_probs > CONF_TH_HIGH)[0]
-        normal_model_idx = np.where(all_probs < CONF_TH_LOW)[0]
-        
-        print(f"   Model High Conf Candidates -> AFib: {len(afib_model_idx)}, Normal: {len(normal_model_idx)}")
-        
-        # 3. 平衡 & Top-K 选取
-        target_count_r2 = min(len(afib_model_idx), len(normal_model_idx), 2500)
-        
-        # AFib (prob -> 1.0)
-        afib_probs_subset = all_probs[afib_model_idx]
-        afib_top_k_indices = np.argsort(afib_probs_subset)[::-1][:target_count_r2] 
-        final_afib_idx_r2 = afib_model_idx[afib_top_k_indices]
-        
-        # Normal (prob -> 0.0)
-        normal_probs_subset = all_probs[normal_model_idx]
-        normal_top_k_indices = np.argsort(normal_probs_subset)[:target_count_r2] 
-        final_normal_idx_r2 = normal_model_idx[normal_top_k_indices]
-        
-        X_afib_r2 = no_label_data[final_afib_idx_r2]
-        X_normal_r2 = no_label_data[final_normal_idx_r2]
-        
-        X_train_r2 = np.concatenate([X_afib_r2, X_normal_r2])
-        y_train_r2 = np.concatenate([np.ones(len(X_afib_r2)), np.zeros(len(X_normal_r2))])
-        
-        perm = np.random.permutation(len(X_train_r2))
-        X_train_r2, y_train_r2 = X_train_r2[perm], y_train_r2[perm]
-        
-        print(f"   Final Training Set for Round 2: {X_train_r2.shape}")
+            else:
+                # Round 2+: 使用上一轮模型生成伪标签 (Self-Training)
+                print(f"Using Round {r_idx-1} model to generate pseudo-labels...")
+                
+                # 加载上一轮模型
+                current_model.load_state_dict(torch.load(current_model_path, map_location=device, weights_only=True))
+                current_model.eval()
+                
+                # 1. 预测无标签数据
+                X_all_unlabeled = torch.from_numpy(no_label_data).float().unsqueeze(1)
+                unlabeled_loader = DataLoader(TensorDataset(X_all_unlabeled), batch_size=BATCH_SIZE, shuffle=False)
+                
+                all_probs = []
+                with torch.no_grad():
+                    for (x,) in tqdm(unlabeled_loader, desc=f"Inference R{r_idx-1}", leave=False):
+                        x = x.to(device)
+                        out = current_model(x).view(-1)
+                        all_probs.extend(out.cpu().numpy())
+                all_probs = np.array(all_probs)
+                
+                # 2. 筛选高置信度样本
+                CONF_TH_HIGH = 0.95
+                CONF_TH_LOW = 0.05
+                
+                afib_model_idx = np.where(all_probs > CONF_TH_HIGH)[0]
+                normal_model_idx = np.where(all_probs < CONF_TH_LOW)[0]
+                
+                # 3. 平衡 & Top-K 选取
+                target_count = min(len(afib_model_idx), len(normal_model_idx), 2500)
+                
+                if target_count < 50:
+                    print(f"⚠️ Warning: Not enough high-confidence samples in Round {r_idx}. Skipping...")
+                    # 如果样本太少，就中止后续轮次
+                    break
 
-        # 4. Train Final Model
-        model_final, path_final, hist_final = run_cnn_training(X_train_r2, y_train_r2, "CNN_Final_iter2", seed=current_seed)
+                # AFib (prob -> 1.0)
+                afib_probs_subset = all_probs[afib_model_idx]
+                afib_top_k = np.argsort(afib_probs_subset)[::-1][:target_count] 
+                final_afib_idx = afib_model_idx[afib_top_k]
+                
+                # Normal (prob -> 0.0)
+                normal_probs_subset = all_probs[normal_model_idx]
+                normal_top_k = np.argsort(normal_probs_subset)[:target_count] 
+                final_normal_idx = normal_model_idx[normal_top_k]
+                
+                X_afib_new = no_label_data[final_afib_idx]
+                X_normal_new = no_label_data[final_normal_idx]
+                
+                print(f"   Round {r_idx} Training Data: {len(X_afib_new)} AFib + {len(X_normal_new)} Normal")
+                
+                # 4. 构建新一轮训练集
+                curr_X_train = np.concatenate([X_afib_new, X_normal_new])
+                curr_y_train = np.concatenate([np.ones(len(X_afib_new)), np.zeros(len(X_normal_new))])
+                
+                perm = np.random.permutation(len(curr_X_train))
+                curr_X_train, curr_y_train = curr_X_train[perm], curr_y_train[perm]
+                
+                model_suffix = f"Iter{r_idx}_SelfTrain"
 
-        # ========================================================
-        # Part 5：最终测试
-        # ========================================================
-        print(f"\n--- Final Test (Run {run_idx+1}) ---")
-
-        model_final.load_state_dict(torch.load(path_final, map_location=device, weights_only=True))
+            # --- 模型训练 ---
+            save_name = f"CNN_{model_suffix}"
+            current_model, current_model_path, hist = run_cnn_training(
+                curr_X_train, curr_y_train, save_name, seed=current_seed
+            )
+            last_hist = hist
+            
+            # --- 测试集评估 ---
+            current_model.load_state_dict(torch.load(current_model_path, map_location=device, weights_only=True))
+            test_loader = make_loader(X_test, y_test, False, augment=False)
+            
+            preds, gts = [], []
+            with torch.no_grad():
+                for x, y in test_loader:
+                    x = x.to(device)
+                    out = current_model(x).squeeze()
+                    preds.extend((out > 0.5).int().cpu().numpy())
+                    gts.extend(y.numpy())
+            
+            acc = accuracy_score(gts, preds)
+            f1 = f1_score(gts, preds)
+            
+            print(f"   [Round {r_idx} Result] -> Acc: {acc:.4f}, F1: {f1:.4f}")
+            run_iter_accs.append(acc)
+            run_iter_f1s.append(f1)
+            
+            if r_idx == 1:
+                all_r1_accs.append(acc)
+                all_r1_f1s.append(f1)
         
-        test_loader = make_loader(X_test, y_test, False, augment=False)
-
-        preds, gts = [], []
-        with torch.no_grad():
-            for x, y in test_loader:
-                x = x.to(device)
-                out = model_final(x).squeeze()
-                pred = (out > 0.5).int().cpu().numpy()
-                preds.extend(pred)
-                gts.extend(y.numpy())
-
-        acc = accuracy_score(gts, preds)
-        f1 = f1_score(gts, preds)
-
-        print(f"   [Run {run_idx+1}] Result -> Accuracy: {acc:.4f}, F1: {f1:.4f}")
+        # 循环结束，记录最终结果 (最后一轮)
+        if len(run_iter_accs) > 0:
+            final_acc = run_iter_accs[-1]
+            final_f1 = run_iter_f1s[-1]
+        else:
+            final_acc = 0
+            final_f1 = 0
         
-        all_final_accs.append(acc)
-        all_final_f1s.append(f1)
+        all_final_accs.append(final_acc)
+        all_final_f1s.append(final_f1)
         
-        # Save Plot for last run only (to avoid clutter) or separate files
-        if run_idx == 0:
+        print(f"   Run {run_idx+1} Final Result -> Accuracy: {final_acc:.4f}, F1: {final_f1:.4f}")
+        
+        # Record history for this run
+        all_runs_history.append({
+            "run_id": run_idx + 1,
+            "seed": current_seed,
+            "iter_accuracies": [float(x) for x in run_iter_accs],
+            "iter_f1_scores": [float(x) for x in run_iter_f1s]
+        })
+        
+        # Save Plot for last run only
+        if run_idx == 0 and last_hist is not None:
             plt.figure(figsize=(12, 5))
             plt.subplot(1, 2, 1)
-            plt.plot(hist_final['train_loss'], label='Train Loss')
-            plt.plot(hist_final['valid_loss'], label='Validation Loss')
-            plt.title(f'Loss Curve (Run {run_idx+1})')
+            plt.plot(last_hist['train_loss'], label='Train Loss')
+            plt.plot(last_hist['valid_loss'], label='Validation Loss')
+            plt.title(f'Loss Curve (Run {run_idx+1}, Final)')
             plt.legend()
             plt.subplot(1, 2, 2)
-            plt.plot(hist_final['train_acc'], label='Train Accuracy')
-            plt.plot(hist_final['valid_acc'], label='Validation Accuracy')
-            plt.title(f'Accuracy Curve (Run {run_idx+1})')
+            plt.plot(last_hist['train_acc'], label='Train Accuracy')
+            plt.plot(last_hist['valid_acc'], label='Validation Accuracy')
+            plt.title(f'Accuracy Curve (Run {run_idx+1}, Final)')
             plt.legend()
             plt.tight_layout()
             plt.savefig(os.path.join("results", f"training_process_run{run_idx+1}.png"))

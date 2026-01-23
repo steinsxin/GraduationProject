@@ -3,26 +3,12 @@ import torch
 import os
 
 # ----------------------
-# 模型训练函数（支持保存最优模型）
+# 模型训练函数（支持保存最优模型 & MixUp）
 # ----------------------
-def train_model(model, train_loader, test_loader, criterion, optimizer, num_epochs, device, save_best=False, save_path=None):
+def train_model(model, train_loader, test_loader, criterion, optimizer, num_epochs, device, save_best=False, save_path=None, use_mixup=False, mixup_alpha=0.2):
 
     """
     训练模型并可选地保存验证集上表现最好的模型。
-
-    参数:
-        model: PyTorch 模型
-        train_loader: 训练数据 DataLoader
-        test_loader: 验证/测试数据 DataLoader
-        criterion: 损失函数
-        optimizer: 优化器
-        num_epochs: 总训练轮数
-        device: 设备 ('cpu' 或 'cuda')
-        save_best (bool): 是否保存验证集上表现最好的模型
-        save_path (str): 模型保存路径（.pth 文件），仅在 save_best=True 时有效
-
-    返回:
-        dict 包含训练后的模型和各 epoch 的损失/准确率曲线
     """
     train_epochs_loss = []
     valid_epochs_loss = []
@@ -43,19 +29,34 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, num_epoc
             inputs = inputs.to(torch.float32).to(device)
             labels = labels.to(torch.float32).view(-1, 1).to(device) 
 
-
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            # --- MixUp Logic ---
+            if use_mixup and inputs.size(0) > 1:
+                lam = np.random.beta(mixup_alpha, mixup_alpha)
+                index = torch.randperm(inputs.size(0)).to(device)
+                
+                mixed_inputs = lam * inputs + (1 - lam) * inputs[index]
+                y_a, y_b = labels, labels[index]
+                
+                outputs = model(mixed_inputs)
+                loss = lam * criterion(outputs, y_a) + (1 - lam) * criterion(outputs, y_b)
+                
+                preds = (outputs >= 0.5).float()
+                target_approx = y_a if lam > 0.5 else y_b
+                train_correct += (preds == target_approx).sum().item()
+            
+            else:
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                preds = (outputs >= 0.5).float()
+                train_correct += (preds == labels).sum().item()
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             train_loss.append(loss.item())
-            preds = (outputs >= 0.5).float()
-            train_correct += (preds == labels).sum().item()
             train_total += labels.size(0)
-
+        
         epoch_train_loss = np.mean(train_loss)
         epoch_train_acc = train_correct / train_total
         train_epochs_loss.append(epoch_train_loss)
@@ -86,7 +87,6 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, num_epoc
 
         # ========== 保存最优模型 ==========
         if save_best and save_path is not None:
-            # 创建目录（如果不存在）
             save_dir = os.path.dirname(save_path)
             if save_dir != "" and not os.path.exists(save_dir):
                 os.makedirs(save_dir)
@@ -94,11 +94,13 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, num_epoc
             if epoch_val_loss < best_loss:
                 best_loss = epoch_val_loss
                 torch.save(model.state_dict(), save_path)
-                print(f"Epoch {epoch+1}: validation loss improved to {best_loss:.4f}, saving model to {save_path}")
+                # print(f"Epoch {epoch+1}: validation loss improved to {best_loss:.4f}, saving model to {save_path}")
 
-        # ========== 学习率调整 ==========
-        lr_adjust = {2: 5e-5, 4: 1e-5, 6: 5e-6, 8: 1e-6,
-                     10: 5e-7, 15: 1e-7, 20: 5e-8}
+        # ========== 学习率调整 (Old Style) ==========
+        # 如果 epoch 增加到了 60，原来的 decay 太快了，稍微放缓一点
+        lr_adjust = {
+            10: 5e-4, 20: 1e-4, 30: 5e-5, 40: 1e-5, 50: 1e-6
+        }
         if epoch in lr_adjust:
             new_lr = lr_adjust[epoch]
             for g in optimizer.param_groups:
