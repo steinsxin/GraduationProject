@@ -25,7 +25,7 @@ CV_TH = 0.02
 ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
-BATCH_SIZE = 128
+BATCH_SIZE = 32
 NUM_EPOCHS = 20
 LR = 1e-3
 
@@ -207,6 +207,8 @@ if __name__ == "__main__":
         return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=shuffle)
 
     def run_training(model_class, X_train, y_train, model_name, seed=42):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         print(f"\n   >>> Training {model_name} (Seed: {seed}) ...")
         
         X_tr, X_val, y_tr, y_val = train_test_split(
