@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 import my_func
 from model.CNN import CNN
-from model.LSTM import LSTM_Model  # New Architecture
+from model.Transformer import Transformer_Model  # Transformer Architecture
 
 # ============================================================
 # 全局参数
@@ -26,12 +26,8 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 20
+NUM_EPOCHS = 40
 LR = 1e-3
-
-# 新增：中间数据保存路径
-INTERMEDIATE_DIR = "intermediate_results"
-os.makedirs(INTERMEDIATE_DIR, exist_ok=True)
 
 # ============================================================
 # 信号处理 & 特征
@@ -253,7 +249,7 @@ if __name__ == "__main__":
     # Interactive Iteration (Part 3)
     # ========================================================
     NUM_RUNS = 1
-    TOTAL_ROUNDS = 10 
+    TOTAL_ROUNDS = 10
     
     # Results storage
     results_history = [] 
@@ -272,7 +268,7 @@ if __name__ == "__main__":
         curr_y_train_lstm = y_train_init.copy()
         
         run_res = {
-            "cnn_acc": [], "lstm_acc": [], "ensemble_acc": []
+            "cnn_acc": [], "tf_acc": [], "ensemble_acc": []
         }
 
         for r_idx in range(1, TOTAL_ROUNDS + 1):
@@ -281,16 +277,16 @@ if __name__ == "__main__":
             # 1. Train CNN
             model_cnn, path_cnn = run_training(CNN, curr_X_train_cnn, curr_y_train_cnn, f"Inter_CNN_R{r_idx}", current_seed)
             
-            # 2. Train LSTM
-            model_lstm, path_lstm = run_training(LSTM_Model, curr_X_train_lstm, curr_y_train_lstm, f"Inter_LSTM_R{r_idx}", current_seed)
+            # 2. Train Transformer
+            model_tf, path_tf = run_training(Transformer_Model, curr_X_train_lstm, curr_y_train_lstm, f"Inter_TF_R{r_idx}", current_seed)
             
             # 3. Evaluate on Test (Ensemble)
             test_loader = make_loader(X_test, y_test, False, augment=False)
             model_cnn.eval()
-            model_lstm.eval()
+            model_tf.eval()
             
             probs_cnn_test = []
-            probs_lstm_test = []
+            probs_tf_test = []
             gts = []
             
             with torch.no_grad():
@@ -299,31 +295,31 @@ if __name__ == "__main__":
                     # CNN Output
                     out_c = model_cnn(x).squeeze()
                     probs_cnn_test.extend(out_c.cpu().numpy())
-                    # LSTM Output
-                    out_l = model_lstm(x).squeeze()
-                    probs_lstm_test.extend(out_l.cpu().numpy())
+                    # Transformer Output
+                    out_t = model_tf(x).squeeze()
+                    probs_tf_test.extend(out_t.cpu().numpy())
                     
                     gts.extend(y.numpy())
             
             probs_cnn_test = np.array(probs_cnn_test)
-            probs_lstm_test = np.array(probs_lstm_test)
+            probs_tf_test = np.array(probs_tf_test)
             gts = np.array(gts)
             
             acc_cnn = accuracy_score(gts, (probs_cnn_test > 0.5).astype(int))
-            acc_lstm = accuracy_score(gts, (probs_lstm_test > 0.5).astype(int))
+            acc_tf = accuracy_score(gts, (probs_tf_test > 0.5).astype(int))
             
             # Ensemble (Average Probability)
-            probs_ens = (probs_cnn_test + probs_lstm_test) / 2.0
+            probs_ens = (probs_cnn_test + probs_tf_test) / 2.0
             acc_ens = accuracy_score(gts, (probs_ens > 0.5).astype(int))
             f1_ens = f1_score(gts, (probs_ens > 0.5).astype(int))
             
             print(f"   [Round {r_idx} Result]")
             print(f"     CNN Acc: {acc_cnn:.4f}")
-            print(f"     LSTM Acc: {acc_lstm:.4f}")
+            print(f"     TF Acc: {acc_tf:.4f}")
             print(f"     Ensemble Acc: {acc_ens:.4f}  (F1: {f1_ens:.4f})")
             
             run_res["cnn_acc"].append(acc_cnn)
-            run_res["lstm_acc"].append(acc_lstm)
+            run_res["tf_acc"].append(acc_tf)
             run_res["ensemble_acc"].append(acc_ens)
             
             # 4. Interactive Pseudo-Labeling (Cross-Feeding)
@@ -332,67 +328,83 @@ if __name__ == "__main__":
             unlabeled_loader = DataLoader(TensorDataset(X_all_unlabeled), batch_size=BATCH_SIZE, shuffle=False)
             
             probs_u_cnn = []
-            probs_u_lstm = []
+            probs_u_tf = []
             
             with torch.no_grad():
                 for (x,) in tqdm(unlabeled_loader, desc=f"Pseudolabeling R{r_idx}", leave=False):
                     x = x.to(device)
                     probs_u_cnn.extend(model_cnn(x).view(-1).cpu().numpy())
-                    probs_u_lstm.extend(model_lstm(x).view(-1).cpu().numpy())
+                    probs_u_tf.extend(model_tf(x).view(-1).cpu().numpy())
             
             probs_u_cnn = np.array(probs_u_cnn)
-            probs_u_lstm = np.array(probs_u_lstm)
+            probs_u_tf = np.array(probs_u_tf)
             
             # Define Thresholds
             TH_HIGH = 0.95
             TH_LOW = 0.05
             
-            # Select High Confidence from CNN -> Feed to LSTM
-            cnn_afib_idx = np.where(probs_u_cnn > TH_HIGH)[0]
-            cnn_normal_idx = np.where(probs_u_cnn < TH_LOW)[0]
-            
-            # Select High Confidence from LSTM -> Feed to CNN
-            lstm_afib_idx = np.where(probs_u_lstm > TH_HIGH)[0]
-            lstm_normal_idx = np.where(probs_u_lstm < TH_LOW)[0]
-            
-            # Balance Mechanism (Take top K to avoid imbalance drifting)
-            # Strategy: "CNN inputs to LSTM"
-            # We want to give LSTM samples that CNN is confident about
-            count_for_lstm = min(len(cnn_afib_idx), len(cnn_normal_idx), 2500)
-            
-            if count_for_lstm > 0:
-                # Top K from CNN for AFib
-                cnn_top_afib = np.argsort(probs_u_cnn[cnn_afib_idx])[::-1][:count_for_lstm]
-                idx_afib_for_lstm = cnn_afib_idx[cnn_top_afib]
+            # Determine Source for Next Round Data
+            if r_idx < 3:
+                # Self-Training: Each model learns from its OWN high predictions
+                print(f"   [Strategy Round {r_idx}] Self-Training (Own Data)")
+                probs_for_next_tf = probs_u_cnn
+                probs_for_next_cnn  = probs_u_cnn
                 
-                # Top K from CNN for Normal
-                cnn_top_normal = np.argsort(probs_u_cnn[cnn_normal_idx])[:count_for_lstm]
-                idx_normal_for_lstm = cnn_normal_idx[cnn_top_normal]
+                source_name_tf = "TF (Self)"
+                source_name_cnn  = "CNN (Self)"
+            else:
+                # Interactive: Cross-Feeding
+                print(f"   [Strategy Round {r_idx}] Interactive Co-Training (Cross Data)")
+                probs_for_next_tf = probs_u_cnn
+                probs_for_next_cnn  = probs_u_tf
                 
-                # Construct training set for NEXT round LSTM
-                X_af = no_label_data[idx_afib_for_lstm]
-                X_nm = no_label_data[idx_normal_for_lstm]
+                source_name_tf = "CNN (Cross)"
+                source_name_cnn  = "TF (Cross)"
+            
+            # ------------------------------------------------------------------------
+            # 1. Update Transformer Training Data (using probs_for_next_tf)
+            # ------------------------------------------------------------------------
+            src_afib_idx = np.where(probs_for_next_tf > TH_HIGH)[0]
+            src_normal_idx = np.where(probs_for_next_tf < TH_LOW)[0]
+
+            count_for_tf = min(len(src_afib_idx), len(src_normal_idx), 2500)
+            
+            if count_for_tf > 0:
+                # Top K
+                top_afib = np.argsort(probs_for_next_tf[src_afib_idx])[::-1][:count_for_tf]
+                idx_afib_for_tf = src_afib_idx[top_afib]
+                
+                top_normal = np.argsort(probs_for_next_tf[src_normal_idx])[:count_for_tf]
+                idx_normal_for_tf = src_normal_idx[top_normal]
+                
+                # Construct training set for NEXT round Transformer
+                X_af = no_label_data[idx_afib_for_tf]
+                X_nm = no_label_data[idx_normal_for_tf]
                 curr_X_train_lstm = np.concatenate([X_af, X_nm])
                 curr_y_train_lstm = np.concatenate([np.ones(len(X_af)), np.zeros(len(X_nm))])
                 # Shuffle
                 p = np.random.permutation(len(curr_X_train_lstm))
                 curr_X_train_lstm, curr_y_train_lstm = curr_X_train_lstm[p], curr_y_train_lstm[p]
                 
-                print(f"   Next LSTM Data (from CNN confidence): {len(curr_X_train_lstm)}")
+                print(f"   Next TF Data: {len(curr_X_train_lstm)} (Source: {source_name_tf})")
             else:
-                print("   Warning: CNN has no confident samples. Keeping LSTM data same.")
+                print(f"   Warning: Source ({source_name_tf}) has no confident samples. Keeping TF data same.")
 
-            # Strategy: "LSTM inputs to CNN"
-            count_for_cnn = min(len(lstm_afib_idx), len(lstm_normal_idx), 2500)
+            # ------------------------------------------------------------------------
+            # 2. Update CNN Training Data (using probs_for_next_cnn)
+            # ------------------------------------------------------------------------
+            src_afib_idx = np.where(probs_for_next_cnn > TH_HIGH)[0]
+            src_normal_idx = np.where(probs_for_next_cnn < TH_LOW)[0]
+            
+            count_for_cnn = min(len(src_afib_idx), len(src_normal_idx), 2500)
             
             if count_for_cnn > 0:
-                # Top K from LSTM for AFib
-                lstm_top_afib = np.argsort(probs_u_lstm[lstm_afib_idx])[::-1][:count_for_cnn]
-                idx_afib_for_cnn = lstm_afib_idx[lstm_top_afib]
+                # Top K
+                top_afib = np.argsort(probs_for_next_cnn[src_afib_idx])[::-1][:count_for_cnn]
+                idx_afib_for_cnn = src_afib_idx[top_afib]
                 
-                # Top K from LSTM for Normal
-                lstm_top_normal = np.argsort(probs_u_lstm[lstm_normal_idx])[:count_for_cnn]
-                idx_normal_for_cnn = lstm_normal_idx[lstm_top_normal]
+                top_normal = np.argsort(probs_for_next_cnn[src_normal_idx])[:count_for_cnn]
+                idx_normal_for_cnn = src_normal_idx[top_normal]
                 
                 # Construct
                 X_af = no_label_data[idx_afib_for_cnn]
@@ -403,33 +415,10 @@ if __name__ == "__main__":
                 p = np.random.permutation(len(curr_X_train_cnn))
                 curr_X_train_cnn, curr_y_train_cnn = curr_X_train_cnn[p], curr_y_train_cnn[p]
                 
-                print(f"   Next CNN Data (from LSTM confidence): {len(curr_X_train_cnn)}")
+                print(f"   Next CNN Data: {len(curr_X_train_cnn)} (Source: {source_name_cnn})")
             else:
-                 print("   Warning: LSTM has no confident samples. Keeping CNN data same.")
+                 print(f"   Warning: Source ({source_name_cnn}) has no confident samples. Keeping CNN data same.")
 
         results_history.append(run_res)
 
-    # 【保存】最终结果汇总
-    final_results = {
-        'num_runs': NUM_RUNS,
-        'total_rounds': TOTAL_ROUNDS,
-        'runs': results_history,
-        'config': {
-            'CV_TH': CV_TH,
-            'ARI_TH': ARI_TH,
-            'BATCH_SIZE': BATCH_SIZE,
-            'NUM_EPOCHS': NUM_EPOCHS,
-            'LR': LR,
-            'TH_HIGH': TH_HIGH,
-            'TH_LOW': TH_LOW
-        }
-    }
-    
-    with open(os.path.join(INTERMEDIATE_DIR, "final_results.json"), 'w') as f:
-        json.dump(final_results, f, indent=2)
-
-    print("\n✓ 完成！所有中间数据已保存至 './intermediate_results/' 目录")
-    print("  - initial_pseudo_labels.npz: 初始规则生成的伪标签")
-    print("  - test_set.npz: 测试集数据")
-    print("  - run_X/round_Y/: 每轮迭代的详细数据")
-    print("  - final_results.json: 最终汇总结果")
+    print("\nDone. Interactive Training Complete.")

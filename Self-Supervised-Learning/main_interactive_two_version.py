@@ -29,6 +29,9 @@ BATCH_SIZE = 32
 NUM_EPOCHS = 40
 LR = 1e-3
 
+INTERMEDIATE_DIR = "intermediate_results"
+os.makedirs(INTERMEDIATE_DIR, exist_ok=True)
+
 # ============================================================
 # 信号处理 & 特征
 # ============================================================
@@ -420,5 +423,30 @@ if __name__ == "__main__":
                  print(f"   Warning: Source ({source_name_cnn}) has no confident samples. Keeping CNN data same.")
 
         results_history.append(run_res)
+
+    # 【保存】最终结果汇总
+    final_results = {
+        'num_runs': NUM_RUNS,
+        'total_rounds': TOTAL_ROUNDS,
+        'runs': results_history,
+        'config': {
+            'CV_TH': CV_TH,
+            'ARI_TH': ARI_TH,
+            'BATCH_SIZE': BATCH_SIZE,
+            'NUM_EPOCHS': NUM_EPOCHS,
+            'LR': LR,
+            'TH_HIGH': TH_HIGH,
+            'TH_LOW': TH_LOW
+        }
+    }
+    
+    with open(os.path.join(INTERMEDIATE_DIR, "final_results.json"), 'w') as f:
+        json.dump(final_results, f, indent=2)
+
+    print("\n✓ 完成！所有中间数据已保存至 './intermediate_results/' 目录")
+    print("  - initial_pseudo_labels.npz: 初始规则生成的伪标签")
+    print("  - test_set.npz: 测试集数据")
+    print("  - run_X/round_Y/: 每轮迭代的详细数据")
+    print("  - final_results.json: 最终汇总结果")
 
     print("\nDone. Interactive Training Complete.")
