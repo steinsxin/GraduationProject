@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 40
+NUM_EPOCHS = 20
 LR = 1e-3
 
 # ============================================================
