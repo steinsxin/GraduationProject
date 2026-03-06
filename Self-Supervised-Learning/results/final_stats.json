@@ -4,24 +4,24 @@
         "mean_f1_score": 0.7710280373831776
     },
     "round_1_model": {
-        "mean_accuracy": 0.731,
+        "mean_accuracy": 0.674,
         "std_accuracy": 0.0,
-        "mean_f1_score": 0.7876874506708761,
+        "mean_f1_score": 0.6464208242950108,
         "std_f1_score": 0.0,
         "raw_accuracies": [
-            0.731
+            0.674
         ]
     },
     "final_model": {
-        "mean_accuracy": 0.891,
+        "mean_accuracy": 0.674,
         "std_accuracy": 0.0,
-        "mean_f1_score": 0.9009990917347865,
+        "mean_f1_score": 0.6464208242950108,
         "std_f1_score": 0.0,
         "raw_accuracies": [
-            0.891
+            0.674
         ],
         "raw_f1_scores": [
-            0.9009990917347865
+            0.6464208242950108
         ]
     }
 }

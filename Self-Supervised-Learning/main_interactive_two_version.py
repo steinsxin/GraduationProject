@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 20
+NUM_EPOCHS = 40
 LR = 1e-3
 
 INTERMEDIATE_DIR = "intermediate_results"
@@ -347,7 +347,7 @@ if __name__ == "__main__":
             TH_LOW = 0.05
             
             # Determine Source for Next Round Data
-            if r_idx < 3:
+            if r_idx < 2:
                 # Self-Training: Each model learns from its OWN high predictions
                 print(f"   [Strategy Round {r_idx}] Self-Training (Own Data)")
                 probs_for_next_lstm = probs_u_cnn

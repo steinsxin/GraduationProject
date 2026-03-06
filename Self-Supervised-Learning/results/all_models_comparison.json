@@ -1,7 +1,7 @@
 {
     "Bestmodel_CNN_ratio_1_99_fold_3": {
-        "accuracy": 0.625,
-        "f1_score": 0.7272727272727273,
+        "accuracy": 0.573,
+        "f1_score": 0.700770847932726,
         "pseudo_afib_count": 569,
         "pseudo_normal_count": 1420,
         "status": "success"
@@ -21,8 +21,8 @@
         "status": "success"
     },
     "Bestmodel_CNN_ratio_1_99_fold_5": {
-        "accuracy": 0.636,
-        "f1_score": 0.7115689381933439,
+        "accuracy": 0.653,
+        "f1_score": 0.7252573238321457,
         "pseudo_afib_count": 5698,
         "pseudo_normal_count": 3653,
         "status": "success"

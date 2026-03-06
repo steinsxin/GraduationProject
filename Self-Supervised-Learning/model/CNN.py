@@ -3,102 +3,63 @@
 import torch
 import torch.nn as nn
 
-# Basic Block for ResNet
-class BasicBlock1d(nn.Module):
-    expansion = 1
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(BasicBlock1d, self).__init__()
-        # Padding = kernel_size // 2 (for odd kernel size)
-        self.conv1 = nn.Conv1d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm1d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv1d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm1d(planes)
-        self.downsample = downsample
-        self.stride = stride
-
-    def forward(self, x):
-        identity = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out += identity
-        out = self.relu(out)
-
-        return out
-
-class ResNet1d(nn.Module):
-    def __init__(self, block, layers, input_channels=1, num_classes=1):
-        super(ResNet1d, self).__init__()
-        self.inplanes = 64
-        self.conv1 = nn.Conv1d(input_channels, 64, kernel_size=15, stride=2, padding=7, bias=False)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
-
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(512 * block.expansion, num_classes),
-            nn.Sigmoid()
+class CNN(nn.Module):
+    def __init__(self, input_channels=1, seq_length=4000):
+        super(CNN, self).__init__()
+        
+        # 四层卷积
+        self.features = nn.Sequential(
+            # Layer 1: 快速降维 + 宏观特征提取
+            nn.Conv1d(in_channels=input_channels, out_channels=16, kernel_size=50, stride=3, padding=25),  # 输入: (batch, 1, 4000)
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # 输出形状: (batch, 16, 666)
+            
+            # Layer 2: 中等粒度特征
+            nn.Conv1d(16, 32, kernel_size=20, stride=2, padding=10),  # 输出: (batch, 32, 333)
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.MaxPool1d(2, stride=2),  # 输出: (batch, 32, 166)
+            
+            # Layer 3: 局部细节特征
+            nn.Conv1d(32, 64, kernel_size=10, stride=1, padding=5),  # 输出: (batch, 64, 166)
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.MaxPool1d(2, stride=2),  # 输出: (batch, 64, 83)
+            
+            # Layer 4: 深层抽象特征
+            nn.Conv1d(64, 128, kernel_size=5, stride=1, padding=2),  # 输出: (batch, 128, 83)
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1)  # 全局平均池化 → (batch, 128, 1)
+        )
+        
+        # 分类头
+        self.classifier = nn.Sequential(
+            nn.Flatten(),  # 展平 → (batch, 128)
+            nn.Linear(128, 64),  # 全连接 → (batch, 64)
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(64, 1),  # 二分类输出
+            nn.Sigmoid()  # Sigmoid激活概率输出
         )
 
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv1d(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm1d(planes * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-
-        return nn.Sequential(*layers)
-
     def forward(self, x):
-        if x.dim() == 2:
-            x = x.unsqueeze(1)
+        # 输入形状检查: (batch, channels, length)
+        if x.dim() == 2:  # 处理未添加通道维度的输入
+            x = x.unsqueeze(1)  # (batch, length) → (batch, 1, length)
+            
+        x = self.features(x)
+        return self.classifier(x)
 
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        return x
-
-def CNN(input_channels=1):
-    # ResNet-18 structure [2, 2, 2, 2]
-    return ResNet1d(BasicBlock1d, [2, 2, 2, 2], input_channels=input_channels)
-
+# 示例用法
 if __name__ == "__main__":
+    # 模型初始化
     model = CNN()
-    # print(model)
-    x = torch.randn(32, 1, 4000)
-    y = model(x)
-    print(f"Input: {x.shape}, Output: {y.shape}")
+    print(model)
+    
+    # 验证输入输出形状
+    dummy_input = torch.randn(32, 1, 4000)  # 模拟batch_size=32的输入
+    output = model(dummy_input)
+    print(f"\n输入形状: {dummy_input.shape}")
+    print(f"输出形状: {output.shape}  # 二分类概率")
