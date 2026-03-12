@@ -462,14 +462,6 @@ if __name__ == "__main__":
         
         print(f"   Run {run_idx+1} Final Result -> Accuracy: {final_acc:.4f}, F1: {final_f1:.4f}")
         
-        # Record history for this run
-        all_runs_history.append({
-            "run_id": run_idx + 1,
-            "seed": current_seed,
-            "iter_accuracies": [float(x) for x in run_iter_accs],
-            "iter_f1_scores": [float(x) for x in run_iter_f1s]
-        })
-        
         # Save Plot for last run only
         if run_idx == 0 and last_hist is not None:
             plt.figure(figsize=(12, 5))
