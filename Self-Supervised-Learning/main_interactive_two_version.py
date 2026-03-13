@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 40
+NUM_EPOCHS = 60
 LR = 1e-3
 
 INTERMEDIATE_DIR = "intermediate_results"
@@ -212,13 +212,22 @@ if __name__ == "__main__":
     def run_training(model_class, X_train, y_train, model_name, seed=42):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            
+        # 设置numpy的随机种子
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            
         print(f"\n   >>> Training {model_name} (Seed: {seed}) ...")
         
         X_tr, X_val, y_tr, y_val = train_test_split(
             X_train, y_train, test_size=0.2, stratify=y_train, random_state=seed
         )
 
-        train_loader = make_loader(X_tr, y_tr, shuffle=True, augment=False)
+        train_loader = make_loader(X_tr, y_tr, shuffle=True, augment=True)
         val_loader = make_loader(X_val, y_val, False, augment=False)
         
         torch.manual_seed(seed)
@@ -259,6 +268,7 @@ if __name__ == "__main__":
 
     for run_idx in range(NUM_RUNS):
         current_seed = 42 + run_idx
+        np.random.seed(current_seed)
         print(f"\n\n{'#'*60}")
         print(f"### RUN {run_idx + 1}/{NUM_RUNS} (Seed: {current_seed})")
         print(f"{'#'*60}")

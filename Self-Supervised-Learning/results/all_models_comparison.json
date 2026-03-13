@@ -1,7 +1,7 @@
 {
     "Bestmodel_CNN_ratio_1_99_fold_3": {
-        "accuracy": 0.573,
-        "f1_score": 0.700770847932726,
+        "accuracy": 0.577,
+        "f1_score": 0.7027406886858749,
         "pseudo_afib_count": 569,
         "pseudo_normal_count": 1420,
         "status": "success"
@@ -17,19 +17,19 @@
         "accuracy": 0.5,
         "f1_score": 0.6666666666666666,
         "pseudo_afib_count": 166,
-        "pseudo_normal_count": 399,
-        "status": "success"
-    },
-    "Bestmodel_CNN_ratio_1_99_fold_5": {
-        "accuracy": 0.653,
-        "f1_score": 0.7252573238321457,
-        "pseudo_afib_count": 5698,
-        "pseudo_normal_count": 3653,
+        "pseudo_normal_count": 398,
         "status": "success"
     },
     "Bestmodel_CNN_ratio_1_99_fold_4": {
         "accuracy": 0.0,
         "f1_score": 0.0,
         "status": "failed_imbalanced"
+    },
+    "Bestmodel_CNN_ratio_1_99_fold_5": {
+        "accuracy": 0.653,
+        "f1_score": 0.7274155538098979,
+        "pseudo_afib_count": 5698,
+        "pseudo_normal_count": 3653,
+        "status": "success"
     }
 }

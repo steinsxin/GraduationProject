@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 20
+NUM_EPOCHS = 40
 LR = 1e-3
 
 INTERMEDIATE_DIR = "intermediate_results"
@@ -347,25 +347,31 @@ if __name__ == "__main__":
             TH_LOW = 0.05
             
             # Determine Source for Next Round Data
+            # 前2轮让 CNN 引导；之后使用轮流坐庄策略交替提供伪标签
             if r_idx < 3:
-                # Self-Training: Each model learns from its OWN high predictions
-                print(f"   [Strategy Round {r_idx}] Self-Training (Own Data)")
+                print(f"   [Strategy Round {r_idx}] CNN Guides TF (CNN Probabilities Only)")
                 probs_for_next_tf = probs_u_cnn
-                probs_for_next_cnn  = probs_u_cnn
-                
-                source_name_tf = "TF (Self)"
-                source_name_cnn  = "CNN (Self)"
+                probs_for_next_cnn = probs_u_cnn
+                source_name_tf = "CNN (Guide)"
+                source_name_cnn = "CNN (Self)"
             else:
-                # Interactive: Cross-Feeding
-                print(f"   [Strategy Round {r_idx}] Interactive Co-Training (Cross Data)")
-                probs_for_next_tf = probs_u_cnn
-                probs_for_next_cnn  = probs_u_tf
-                
-                source_name_tf = "CNN (Cross)"
-                source_name_cnn  = "TF (Cross)"
+                if r_idx % 2 == 1:
+                    # 奇数轮（3, 5, 7, 9）：使用 CNN 主导
+                    print(f"   [Strategy Round {r_idx}] Alternating: CNN Provides Labels")
+                    probs_for_next_tf = probs_u_cnn
+                    probs_for_next_cnn = probs_u_cnn
+                    source_name_tf = "CNN (Alternating)"
+                    source_name_cnn = "CNN (Alternating)"
+                else:
+                    # 偶数轮（4, 6, 8, 10）：使用 TF 主导
+                    print(f"   [Strategy Round {r_idx}] Alternating: TF Provides Labels")
+                    probs_for_next_tf = probs_u_tf
+                    probs_for_next_cnn = probs_u_tf
+                    source_name_tf = "TF (Alternating)"
+                    source_name_cnn = "TF (Alternating)"
             
             # ------------------------------------------------------------------------
-            # 1. Update Transformer Training Data (using probs_for_next_tf)
+            # 1. Update Transformer Training Data
             # ------------------------------------------------------------------------
             src_afib_idx = np.where(probs_for_next_tf > TH_HIGH)[0]
             src_normal_idx = np.where(probs_for_next_tf < TH_LOW)[0]
@@ -394,7 +400,7 @@ if __name__ == "__main__":
                 print(f"   Warning: Source ({source_name_tf}) has no confident samples. Keeping TF data same.")
 
             # ------------------------------------------------------------------------
-            # 2. Update CNN Training Data (using probs_for_next_cnn)
+            # 2. Update CNN Training Data
             # ------------------------------------------------------------------------
             src_afib_idx = np.where(probs_for_next_cnn > TH_HIGH)[0]
             src_normal_idx = np.where(probs_for_next_cnn < TH_LOW)[0]

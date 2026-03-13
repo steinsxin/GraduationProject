@@ -3,51 +3,134 @@
   "total_rounds": 10,
   "runs": [
     {
-      "cnn_acc": [
-        0.703,
-        0.836,
-        0.927,
-        0.908,
-        0.936,
-        0.932,
-        0.95,
-        0.944,
-        0.942,
-        0.94
+      "dev_cnn_acc": [
+        0.715,
+        0.87,
+        0.885,
+        0.875
       ],
-      "lstm_acc": [
-        0.705,
-        0.825,
-        0.9,
-        0.932,
-        0.929,
-        0.947,
-        0.941,
-        0.946,
-        0.95,
-        0.939
+      "dev_lstm_acc": [
+        0.78,
+        0.88,
+        0.875,
+        0.855
       ],
-      "ensemble_acc": [
-        0.704,
-        0.841,
-        0.918,
-        0.926,
-        0.935,
-        0.944,
-        0.951,
-        0.952,
-        0.951,
-        0.949
-      ]
+      "dev_ensemble_acc": [
+        0.72,
+        0.885,
+        0.88,
+        0.865
+      ],
+      "dev_cnn_f1": [
+        0.7782101167315175,
+        0.8849557522123894,
+        0.8968609865470852,
+        0.8888888888888888
+      ],
+      "dev_lstm_f1": [
+        0.7731958762886598,
+        0.8928571428571429,
+        0.8888888888888888,
+        0.8733624454148472
+      ],
+      "dev_ensemble_f1": [
+        0.78125,
+        0.8968609865470852,
+        0.8928571428571429,
+        0.8810572687224669
+      ],
+      "test_cnn_acc": [
+        0.71,
+        0.89375,
+        0.9075,
+        0.8975
+      ],
+      "test_lstm_acc": [
+        0.81625,
+        0.9075,
+        0.89375,
+        0.89625
+      ],
+      "test_ensemble_acc": [
+        0.715,
+        0.90125,
+        0.90375,
+        0.89875
+      ],
+      "test_cnn_f1": [
+        0.7751937984496124,
+        0.903954802259887,
+        0.9147465437788018,
+        0.9070294784580499
+      ],
+      "test_lstm_f1": [
+        0.8088426527958388,
+        0.9153318077803204,
+        0.903954802259887,
+        0.9060022650056625
+      ],
+      "test_ensemble_f1": [
+        0.7782101167315175,
+        0.9101251422070534,
+        0.9122006841505131,
+        0.9080590238365494
+      ],
+      "accepted_rounds": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "strategy_per_round": [
+        "cnn_teacher_warmup",
+        "cnn_teacher_warmup",
+        "dual_consensus",
+        "dual_consensus"
+      ],
+      "pseudo_stats": [
+        {
+          "teacher_afib": 15034,
+          "teacher_normal": 2510,
+          "selected_per_class": 2500
+        },
+        {
+          "teacher_afib": 9313,
+          "teacher_normal": 8158,
+          "selected_per_class": 2500
+        },
+        {
+          "agreed_afib": 7143,
+          "agreed_normal": 7273,
+          "selected_per_class": 2500
+        },
+        {
+          "agreed_afib": 7761,
+          "agreed_normal": 6769,
+          "selected_per_class": 2500
+        }
+      ],
+      "best_round": 2,
+      "best_dev_f1": 0.8968609865470852,
+      "best_dev_acc": 0.885,
+      "best_model_paths": {
+        "cnn": "save/Inter_CNN_R2_seed43.pth",
+        "lstm": "save/Inter_LSTM_R2_seed43.pth"
+      }
     }
   ],
   "config": {
     "CV_TH": 0.02,
     "ARI_TH": 0.24,
+    "DEV_RATIO": 0.2,
     "BATCH_SIZE": 32,
     "NUM_EPOCHS": 40,
     "LR": 0.001,
     "TH_HIGH": 0.95,
-    "TH_LOW": 0.05
+    "TH_LOW": 0.05,
+    "CNN_WARMUP_ROUNDS": 2,
+    "CNN_WARMUP_HIGH": 0.9,
+    "CNN_WARMUP_LOW": 0.1,
+    "MAX_PSEUDO_PER_CLASS": 2500,
+    "NO_IMPROVE_PATIENCE": 2
   }
 }
