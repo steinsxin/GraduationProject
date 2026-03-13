@@ -366,13 +366,24 @@ if __name__ == "__main__":
                 source_name_lstm = "LSTM (Self)"
                 source_name_cnn  = "CNN (Self)"
             else:
-                # Interactive: Cross-Feeding
-                print(f"   [Strategy Round {r_idx}] Interactive Co-Training (Cross Data)")
-                probs_for_next_lstm = probs_u_cnn
-                probs_for_next_cnn  = probs_u_lstm
+                # # Interactive: Cross-Feeding
+                # print(f"   [Strategy Round {r_idx}] Interactive Co-Training (Cross Data)")
+                # probs_for_next_lstm = probs_u_cnn
+                # probs_for_next_cnn  = probs_u_lstm
                 
-                source_name_lstm = "CNN (Cross)"
-                source_name_cnn  = "LSTM (Cross)"
+                # source_name_lstm = "CNN (Cross)"
+                # source_name_cnn  = "LSTM (Cross)"
+
+                # 优化点1：从粗暴的交叉喂数据改为"双模型共识" (Ensemble Consensus)。
+                # 只有当两个模型都认同某样本，平均概率才会突破 TH_HIGH 或 TH_LOW。
+                # 这样可以有效过滤掉某一个模型过度自信产生的错误错标。
+                print(f"   [Strategy Round {r_idx}] Interactive Co-Training (Ensemble Consensus)")
+                probs_ens = (probs_u_cnn + probs_u_lstm) / 2.0
+                probs_for_next_lstm = probs_ens
+                probs_for_next_cnn  = probs_ens
+                
+                source_name_lstm = "Ensemble Consensus"
+                source_name_cnn  = "Ensemble Consensus"
             
             # ------------------------------------------------------------------------
             # 1. Update LSTM Training Data (using probs_for_next_lstm)
