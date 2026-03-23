@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 60
+NUM_EPOCHS = 20
 LR = 1e-3
 
 INTERMEDIATE_DIR = "intermediate_results"
@@ -236,7 +236,11 @@ if __name__ == "__main__":
             
         model = model_class().to(device)
         criterion = nn.BCELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+        is_transformer = model_class is Transformer_Model
+        if is_transformer:
+            optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
+        else:
+            optimizer = torch.optim.Adam(model.parameters(), lr=LR)
         
         save_dir = "save"
         os.makedirs(save_dir, exist_ok=True)
@@ -251,7 +255,9 @@ if __name__ == "__main__":
             num_epochs=NUM_EPOCHS,
             device=device,
             save_best=True,
-            save_path=save_path
+            save_path=save_path,
+            use_mixup=False,
+            mixup_alpha=0.2
         )
         # Load best model for return
         model.load_state_dict(torch.load(save_path, map_location=device, weights_only=True))
@@ -267,7 +273,7 @@ if __name__ == "__main__":
     results_history = [] 
 
     for run_idx in range(NUM_RUNS):
-        current_seed = 42 + run_idx
+        current_seed = 45
         np.random.seed(current_seed)
         print(f"\n\n{'#'*60}")
         print(f"### RUN {run_idx + 1}/{NUM_RUNS} (Seed: {current_seed})")
