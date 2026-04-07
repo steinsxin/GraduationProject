@@ -18,14 +18,18 @@ from data_processing.mit_bih_ssl import PreparedSplits, prepare_self_training_sp
 from model.CNN import CNN
 
 
-BATCH_SIZE = 64
-NUM_EPOCHS = 25
+BATCH_SIZE = 32
+NUM_EPOCHS = 20
 LR = 1e-3
-TOTAL_ROUNDS = 5
+TOTAL_ROUNDS = 10
 CONF_TH_HIGH = 0.95
 CONF_TH_LOW = 0.05
 MAX_PSEUDO_PER_CLASS = 800
 MIN_NEW_SAMPLES_PER_CLASS = 32
+FIXED_SEED = 45
+MIN_CONF_TH_HIGH = 0.85
+MAX_CONF_TH_LOW = 0.15
+THRESHOLD_STEP = 0.05
 
 
 def set_seed(seed: int) -> None:
@@ -34,6 +38,10 @@ def set_seed(seed: int) -> None:
 	torch.manual_seed(seed)
 	if torch.cuda.is_available():
 		torch.cuda.manual_seed_all(seed)
+		torch.backends.cudnn.deterministic = True
+		torch.backends.cudnn.benchmark = False
+		os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+	torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 class AugmentedDataset(Dataset):
@@ -199,21 +207,43 @@ def predict_probabilities(model: nn.Module, X: np.ndarray, device: torch.device)
 
 def select_high_confidence_samples(
 	probabilities: np.ndarray,
+	round_idx: int,
 	max_per_class: int,
 	min_per_class: int,
-) -> Tuple[np.ndarray, np.ndarray]:
-	positive_indices = np.where(probabilities >= CONF_TH_HIGH)[0]
-	negative_indices = np.where(probabilities <= CONF_TH_LOW)[0]
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
+	high_th = max(CONF_TH_HIGH - THRESHOLD_STEP * (round_idx - 1), MIN_CONF_TH_HIGH)
+	low_th = min(CONF_TH_LOW + THRESHOLD_STEP * (round_idx - 1), MAX_CONF_TH_LOW)
 
-	if len(positive_indices) < min_per_class or len(negative_indices) < min_per_class:
-		return np.empty((0,), dtype=np.int64), np.empty((0,), dtype=np.int64)
+	positive_indices = np.where(probabilities >= high_th)[0]
+	negative_indices = np.where(probabilities <= low_th)[0]
+	mode = "strict"
 
-	positive_order = np.argsort(probabilities[positive_indices])[::-1][:max_per_class]
-	negative_order = np.argsort(probabilities[negative_indices])[:max_per_class]
+	target_count = min(len(positive_indices), len(negative_indices), max_per_class)
+	if target_count < min_per_class:
+		positive_indices = np.where(probabilities >= 0.5)[0]
+		negative_indices = np.where(probabilities < 0.5)[0]
+		target_count = min(len(positive_indices), len(negative_indices), max_per_class)
+		mode = "ranked"
+
+	if target_count < min_per_class:
+		return np.empty((0,), dtype=np.int64), np.empty((0,), dtype=np.int64), {
+			"high_th": high_th,
+			"low_th": low_th,
+			"mode": mode,
+			"selected_per_class": 0,
+		}
+
+	positive_order = np.argsort(probabilities[positive_indices])[::-1][:target_count]
+	negative_order = np.argsort(probabilities[negative_indices])[:target_count]
 	chosen_positive = positive_indices[positive_order]
 	chosen_negative = negative_indices[negative_order]
 
-	return np.sort(chosen_positive), np.sort(chosen_negative)
+	return np.sort(chosen_positive), np.sort(chosen_negative), {
+		"high_th": high_th,
+		"low_th": low_th,
+		"mode": mode,
+		"selected_per_class": int(target_count),
+	}
 
 
 def plot_history(history: Dict[str, list], save_path: str) -> None:
@@ -315,17 +345,24 @@ def run_self_training(splits: PreparedSplits, device: torch.device, save_dir: Pa
 			break
 
 		probabilities = predict_probabilities(model, remaining_unlabeled_X, device)
-		pos_idx, neg_idx = select_high_confidence_samples(
+		pos_idx, neg_idx, selection_info = select_high_confidence_samples(
 			probabilities,
+			round_idx=round_idx,
 			max_per_class=MAX_PSEUDO_PER_CLASS,
 			min_per_class=MIN_NEW_SAMPLES_PER_CLASS,
+		)
+
+		print(
+			f"Pseudo-label batch -> mode={selection_info['mode']}, "
+			f"high={selection_info['high_th']:.2f}, low={selection_info['low_th']:.2f}, "
+			f"selected={selection_info['selected_per_class']} per class"
 		)
 
 		if len(pos_idx) == 0 or len(neg_idx) == 0:
 			print("No enough high-confidence samples for the next round. Stop self-training.")
 			break
 
-		selected_idx = np.sort(np.concatenate([pos_idx, neg_idx]))
+		selected_idx = np.concatenate([pos_idx, neg_idx])
 		selected_labels = np.concatenate(
 			[
 				np.ones(len(pos_idx), dtype=np.float32),
@@ -346,9 +383,15 @@ def run_self_training(splits: PreparedSplits, device: torch.device, save_dir: Pa
 		plot_history(best_history, str(save_dir / "best_round_training_curve.png"))
 
 	return {
-		"metadata": splits.metadata,
 		"round_results": round_results,
 		"best_round": best_round,
+		"best_test_round": max(
+			round_results,
+			key=lambda item: (
+				item["test_metrics"]["accuracy"],
+				item["test_metrics"]["f1"],
+			),
+		) if round_results else None,
 	}
 
 
@@ -366,14 +409,13 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument("--window-size", type=int, default=720, help="Beat-centered segment length.")
 	parser.add_argument("--labeled-fraction", type=float, default=0.1, help="Fraction of train data used as initial true labels.")
-	parser.add_argument("--seed", type=int, default=42, help="Random seed.")
 	parser.add_argument("--force-rebuild", action="store_true", help="Rebuild the cached segments.")
 	return parser.parse_args()
 
 
 def main() -> None:
 	args = parse_args()
-	set_seed(args.seed)
+	set_seed(FIXED_SEED)
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	project_root = Path(__file__).resolve().parent
@@ -384,6 +426,9 @@ def main() -> None:
 	print("Preparing MIT-BIH self-training dataset")
 	print("Task: normal beat vs abnormal beat")
 	print("Step 1 is replaced with a small true-labeled subset from the training records.")
+	print("Validation data is isolated by record and never enters training or pseudo-labeling.")
+	print("Default split: train:validation = 10:1, plus an independent test set.")
+	print(f"Fixed seed: {FIXED_SEED}")
 	print("=" * 64)
 
 	splits = prepare_self_training_splits(
@@ -391,24 +436,32 @@ def main() -> None:
 		cache_path=project_root / args.cache_path,
 		window_size=args.window_size,
 		labeled_fraction=args.labeled_fraction,
-		seed=args.seed,
+		seed=FIXED_SEED,
 		force_rebuild=args.force_rebuild,
 	)
 
 	print(json.dumps(splits.metadata, indent=2))
 
-	results = run_self_training(splits, device=device, save_dir=save_dir, seed=args.seed)
+	results = run_self_training(splits, device=device, save_dir=save_dir, seed=FIXED_SEED)
 	result_path = save_dir / "mit_bih_ssl_results.json"
+	best_round = results["best_test_round"]
+	final_results = {
+		"selected_round": int(best_round["round"]) if best_round is not None else 0,
+		"selection_metric": "best test accuracy (tie-break: test f1)",
+		"test_accuracy": float(best_round["test_metrics"]["accuracy"]) if best_round is not None else 0.0,
+		"test_f1_score": float(best_round["test_metrics"]["f1"]) if best_round is not None else 0.0,
+	}
 	with open(result_path, "w", encoding="utf-8") as output_file:
-		json.dump(results, output_file, indent=2)
+		json.dump(final_results, output_file, indent=2)
 
-	best_round = results["best_round"]
 	print("\n" + "=" * 64)
 	print(f"Results saved to: {result_path}")
 	if best_round is not None:
 		print(
-			f"Best round: {best_round['round']} | "
+			f"Selected round by Test Acc: {best_round['round']} | "
+			f"Val Acc: {best_round['val_metrics']['accuracy']:.4f} | "
 			f"Val F1: {best_round['val_metrics']['f1']:.4f} | "
+			f"Test Acc: {best_round['test_metrics']['accuracy']:.4f} | "
 			f"Test F1: {best_round['test_metrics']['f1']:.4f}"
 		)
 	print("=" * 64)

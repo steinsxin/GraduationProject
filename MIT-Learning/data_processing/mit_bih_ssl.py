@@ -226,11 +226,11 @@ def prepare_self_training_splits(
     cache_path: str | Path,
     window_size: int = 720,
     labeled_fraction: float = 0.1,
-    val_ratio: float = 0.15,
+    val_ratio: float = 1.0 / 11.0,
     test_ratio: float = 0.15,
     max_train_per_class: int = 4000,
     max_eval_per_class: int = 1000,
-    seed: int = 42,
+    seed: int = 45,
     force_rebuild: bool = False,
 ) -> PreparedSplits:
     rng = np.random.default_rng(seed)
@@ -262,6 +262,16 @@ def prepare_self_training_splits(
         val_records=val_records,
         test_records=test_records,
     )
+
+    train_record_set = set(train_records.tolist())
+    val_record_set = set(val_records.tolist())
+    test_record_set = set(test_records.tolist())
+    if train_record_set & val_record_set:
+        raise RuntimeError("Train and validation records overlap.")
+    if train_record_set & test_record_set:
+        raise RuntimeError("Train and test records overlap.")
+    if val_record_set & test_record_set:
+        raise RuntimeError("Validation and test records overlap.")
 
     train_indices = np.where(train_mask)[0]
     val_indices = np.where(val_mask)[0]
@@ -295,6 +305,8 @@ def prepare_self_training_splits(
     metadata = {
         "window_size": window_size,
         "seed": seed,
+        "train_val_ratio": "10:1",
+        "test_train_ratio": "about 1:5",
         "train_records": train_records.tolist(),
         "val_records": val_records.tolist(),
         "test_records": test_records.tolist(),
