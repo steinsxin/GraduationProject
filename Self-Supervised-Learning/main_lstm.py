@@ -14,8 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 import matplotlib.pyplot as plt
 
 import my_func
-from model.CNN import CNN
-
+from model.LSTM import LSTM_Model
 
 # ============================================================
 # 全局参数
@@ -26,7 +25,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 60
+NUM_EPOCHS = 20
 LR = 1e-3
 
 
@@ -275,7 +274,7 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
             
-        model = CNN().to(device)
+        model = LSTM_Model().to(device)
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
         

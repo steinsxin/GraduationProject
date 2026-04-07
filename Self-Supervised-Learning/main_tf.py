@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 import matplotlib.pyplot as plt
 
 import my_func
-from model.CNN import CNN
+from model.Transformer import Transformer_Model
 
 
 # ============================================================
@@ -26,7 +26,7 @@ ARI_TH = 0.24
 CONF_THRESHOLD = 50.0
 
 BATCH_SIZE = 32
-NUM_EPOCHS = 60
+NUM_EPOCHS = 20
 LR = 1e-3
 
 
@@ -275,7 +275,7 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
             
-        model = CNN().to(device)
+        model = Transformer_Model().to(device)
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
         
@@ -461,6 +461,14 @@ if __name__ == "__main__":
         all_final_f1s.append(final_f1)
         
         print(f"   Run {run_idx+1} Final Result -> Accuracy: {final_acc:.4f}, F1: {final_f1:.4f}")
+        
+        # Record history for this run
+        all_runs_history.append({
+            "run_id": run_idx + 1,
+            "seed": current_seed,
+            "iter_accuracies": [float(x) for x in run_iter_accs],
+            "iter_f1_scores": [float(x) for x in run_iter_f1s]
+        })
         
         # Save Plot for last run only
         if run_idx == 0 and last_hist is not None:
