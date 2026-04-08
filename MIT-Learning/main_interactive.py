@@ -22,17 +22,18 @@ BATCH_SIZE = 32
 NUM_EPOCHS = 20
 LR = 1e-3
 TOTAL_ROUNDS = 10
-WARMUP_ROUNDS = 3
+WARMUP_ROUNDS = 0
 CONF_TH_HIGH = 0.95
 CONF_TH_LOW = 0.05
 MAX_PSEUDO_PER_CLASS = 800
 MIN_NEW_SAMPLES_PER_CLASS = 32
+EARLY_MIN_NEW_SAMPLES_PER_CLASS = 16
 FIXED_SEED = 45
 MIN_CONF_TH_HIGH = 0.85
 MAX_CONF_TH_LOW = 0.15
 THRESHOLD_STEP = 0.05
-LSTM_TO_CNN_MAX_F1_GAP = 0.05
-MIN_LSTM_VAL_F1 = 0.68
+LSTM_TO_CNN_MAX_F1_GAP = 0.12
+MIN_LSTM_VAL_F1 = 0.58
 
 
 def set_seed(seed: int) -> None:
@@ -182,6 +183,11 @@ def select_cross_feed_batch(
         neg_candidates = np.where((source_probs < 0.5) & (peer_probs < 0.5))[0]
         mode = "agreement"
 
+    if len(pos_candidates) < min_per_class or len(neg_candidates) < min_per_class:
+        pos_candidates = np.where(source_probs >= 0.5)[0]
+        neg_candidates = np.where(source_probs < 0.5)[0]
+        mode = "ranked"
+
     target_count = min(len(pos_candidates), len(neg_candidates), max_per_class)
     if target_count < min_per_class:
         return np.empty((0,), dtype=np.int64), np.empty((0,), dtype=np.float32), {
@@ -209,6 +215,26 @@ def select_cross_feed_batch(
         "low_th": low_th,
         "mode": mode,
         "selected_per_class": int(target_count),
+    }
+
+
+def get_interaction_config(round_idx: int) -> Dict[str, float]:
+    if round_idx <= 2:
+        return {
+            "min_per_class": float(EARLY_MIN_NEW_SAMPLES_PER_CLASS),
+            "min_lstm_val_f1": 0.50,
+            "max_f1_gap": 0.20,
+        }
+    if round_idx <= 4:
+        return {
+            "min_per_class": float(EARLY_MIN_NEW_SAMPLES_PER_CLASS),
+            "min_lstm_val_f1": 0.54,
+            "max_f1_gap": 0.16,
+        }
+    return {
+        "min_per_class": float(MIN_NEW_SAMPLES_PER_CLASS),
+        "min_lstm_val_f1": MIN_LSTM_VAL_F1,
+        "max_f1_gap": LSTM_TO_CNN_MAX_F1_GAP,
     }
 
 
@@ -424,12 +450,21 @@ def run_interactive_self_training(
     best_val_f1 = -1.0
 
     for round_idx in range(1, TOTAL_ROUNDS + 1):
+        interaction_config = get_interaction_config(round_idx)
+        min_per_class = int(interaction_config["min_per_class"])
+        min_lstm_val_f1 = float(interaction_config["min_lstm_val_f1"])
+        max_f1_gap = float(interaction_config["max_f1_gap"])
+
         print("\n" + "=" * 64)
         print(f"Interactive Round {round_idx}/{TOTAL_ROUNDS}")
         print(
             f"CNN train size: {len(base_labeled_y) + len(shared_pseudo_y) + len(pseudo_y_for_cnn)} | "
             f"LSTM train size: {len(base_labeled_y) + len(shared_pseudo_y) + len(pseudo_y_for_lstm)} | "
             f"remaining unlabeled: {len(remaining_unlabeled_X)}"
+        )
+        print(
+            f"Interaction config -> min_per_class={min_per_class}, "
+            f"min_lstm_val_f1={min_lstm_val_f1:.2f}, max_f1_gap={max_f1_gap:.2f}"
         )
 
         train_X_cnn, train_y_cnn = update_pseudo_sets(
@@ -529,7 +564,7 @@ def run_interactive_self_training(
             cnn_probs=probs_from_cnn,
             round_idx=round_idx,
             max_per_class=MAX_PSEUDO_PER_CLASS,
-            min_per_class=MIN_NEW_SAMPLES_PER_CLASS,
+            min_per_class=min_per_class,
         )
 
         print(
@@ -548,10 +583,6 @@ def run_interactive_self_training(
         keep_mask[shared_indices] = False
         remaining_after_teacher = remaining_unlabeled_X[keep_mask]
 
-        if round_idx <= WARMUP_ROUNDS:
-            remaining_unlabeled_X = remaining_after_teacher
-            continue
-
         if len(remaining_after_teacher) == 0:
             remaining_unlabeled_X = remaining_after_teacher
             break
@@ -564,12 +595,12 @@ def run_interactive_self_training(
             peer_probs=probs_from_lstm,
             round_idx=round_idx,
             max_per_class=MAX_PSEUDO_PER_CLASS,
-            min_per_class=MIN_NEW_SAMPLES_PER_CLASS,
+            min_per_class=min_per_class,
         )
 
         allow_lstm_to_cnn = (
-            lstm_val_metrics["f1"] >= MIN_LSTM_VAL_F1
-            and lstm_val_metrics["f1"] >= cnn_val_metrics["f1"] - LSTM_TO_CNN_MAX_F1_GAP
+            lstm_val_metrics["f1"] >= min_lstm_val_f1
+            and lstm_val_metrics["f1"] >= cnn_val_metrics["f1"] - max_f1_gap
         )
 
         if allow_lstm_to_cnn:
@@ -578,7 +609,7 @@ def run_interactive_self_training(
                 peer_probs=probs_from_cnn_after_teacher,
                 round_idx=round_idx,
                 max_per_class=MAX_PSEUDO_PER_CLASS,
-                min_per_class=MIN_NEW_SAMPLES_PER_CLASS,
+                min_per_class=min_per_class,
             )
         else:
             selected_for_cnn = np.empty((0,), dtype=np.int64)
@@ -594,7 +625,7 @@ def run_interactive_self_training(
             print(
                 f"LSTM->CNN disabled: lstm_val_f1={lstm_val_metrics['f1']:.4f}, "
                 f"cnn_val_f1={cnn_val_metrics['f1']:.4f}, "
-                f"min_lstm_val_f1={MIN_LSTM_VAL_F1:.2f}, max_gap={LSTM_TO_CNN_MAX_F1_GAP:.2f}"
+                f"min_lstm_val_f1={min_lstm_val_f1:.2f}, max_gap={max_f1_gap:.2f}"
             )
 
         selected_for_cnn, labels_for_cnn = filter_selected_batch(
@@ -683,7 +714,7 @@ def main() -> None:
     print("Interactive MIT-BIH self-training")
     print("Data loading uses the same MIT-BIH record-based split as main.py")
     print("Validation data is isolated by record and never enters training or pseudo-labeling.")
-    print(f"Warmup rounds using CNN pseudo labels only: {WARMUP_ROUNDS}")
+    print("Interaction starts from round 1; no CNN-only warmup rounds.")
     print(f"Fixed seed: {FIXED_SEED}")
     print("=" * 64)
 
