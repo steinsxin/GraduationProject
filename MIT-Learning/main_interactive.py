@@ -31,8 +31,8 @@ FIXED_SEED = 45
 MIN_CONF_TH_HIGH = 0.85
 MAX_CONF_TH_LOW = 0.15
 THRESHOLD_STEP = 0.05
-LSTM_TO_CNN_MAX_F1_GAP = 0.02
-MIN_LSTM_VAL_F1 = 0.75
+LSTM_TO_CNN_MAX_F1_GAP = 0.05
+MIN_LSTM_VAL_F1 = 0.68
 
 
 def set_seed(seed: int) -> None:
@@ -589,6 +589,13 @@ def run_interactive_self_training(
                 "mode": "disabled",
                 "selected_per_class": 0,
             }
+
+        if not allow_lstm_to_cnn:
+            print(
+                f"LSTM->CNN disabled: lstm_val_f1={lstm_val_metrics['f1']:.4f}, "
+                f"cnn_val_f1={cnn_val_metrics['f1']:.4f}, "
+                f"min_lstm_val_f1={MIN_LSTM_VAL_F1:.2f}, max_gap={LSTM_TO_CNN_MAX_F1_GAP:.2f}"
+            )
 
         selected_for_cnn, labels_for_cnn = filter_selected_batch(
             selected_for_cnn,
